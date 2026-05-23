@@ -1,0 +1,89 @@
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-6);
+  background:
+    radial-gradient(circle at 20% 0%, rgba(37, 99, 235, .08), transparent 50%),
+    radial-gradient(circle at 80% 100%, rgba(139, 92, 246, .08), transparent 50%),
+    var(--color-bg);
+  position: relative;
+}
+
+.login-page__lang {
+  position: absolute;
+  top: var(--space-4);
+  right: var(--space-4);
+  min-width: 40px;
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.login-card__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  color: var(--color-text);
+}
+.login-card__brand-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
+  background: linear-gradient(135deg, var(--color-primary), #8b5cf6);
+  color: #fff;
+  font-weight: 700;
+  font-size: 16px;
+}
+.login-card__brand-mark svg {
+  width: 22px;
+  height: 22px;
+  display: block;
+}
+.login-card__subtitle {
+  color: var(--color-text-muted);
+  font-size: var(--font-size-sm);
+  margin-top: -8px;
+}
+
+.login-tabs { width: 100%; display: flex; }
+.login-tabs .tabs { width: 100%; }
+.login-tabs .tabs__tab { flex: 1; }
+
+.login-form {
+  display: none;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.login-form.is-active { display: flex; }
+
+.login-form__error {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-sm);
+  background: var(--color-danger-soft);
+  color: var(--color-danger-hover);
+  font-size: var(--font-size-sm);
+  border: 1px solid #fecaca;
+}
+
+.login-card__footer {
+  text-align: center;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-subtle);
+}

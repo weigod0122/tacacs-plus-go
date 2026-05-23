@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Apollo backup config
+infra-network-tacacs-application.json
+
+# Apollo connection config (contains secret)
+apollo.yaml
+
+# SwM session key
+session.key
+
+# Logs
+logs/
+
+# Build output
+build/
+
+.idea/

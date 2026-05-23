@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>网络设备权限系统 · 登录</title>
+    <meta name="color-scheme" content="light">
+    <link rel="stylesheet" href="/static/css/tokens.css">
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/login.css">
+</head>
+<body class="login-page"{{if .rateLimited}} data-rate-limit="{{.error}}"{{end}}>
+    <button class="btn btn--ghost btn--sm login-page__lang" id="langBtn" type="button">EN</button>
+    <main class="login-card slide-up">
+        <div class="login-card__brand">
+            <span class="login-card__brand-mark" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 21s8-4 8-10V5l-8-3-8 3v6c0 6 8 10 8 10z"/>
+                    <path d="m9 12 2 2 4-4"/>
+                </svg>
+            </span>
+            <span data-i18n="login.brand">网络设备权限系统</span>
+        </div>
+        <p class="login-card__subtitle" data-i18n="login.subtitle">网络设备访问权限审批 / 用户与角色管理</p>
+
+        {{if .error}}
+        <div class="login-form__error" role="alert">{{.error}}</div>
+        {{end}}
+
+        <div class="login-tabs">
+            <div class="tabs" role="tablist" data-i18n-attr="aria-label" data-i18n="login.aria.tabs" aria-label="切换登录或注册">
+                <button class="tabs__tab is-active" id="tab-login" type="button" role="tab" aria-selected="true" data-i18n="login.tab.login">登录</button>
+                <button class="tabs__tab" id="tab-signup" type="button" role="tab" aria-selected="false" data-i18n="login.tab.signup">注册</button>
+            </div>
+        </div>
+
+        <form id="loginForm" class="login-form is-active" method="POST" action="/login" autocomplete="on">
+            <div class="field">
+                <label class="field__label" for="login-username" data-i18n="login.field.user">用户名</label>
+                <input class="input" id="login-username" name="username" type="text" required autocomplete="username" maxlength="64" autofocus>
+            </div>
+            <div class="field">
+                <label class="field__label" for="login-password" data-i18n="login.field.pw">密码</label>
+                <input class="input" id="login-password" name="password" type="password" required autocomplete="current-password" maxlength="128">
+            </div>
+            <button class="btn btn--primary btn--lg" type="submit" data-i18n="login.btn.login">登录</button>
+        </form>
+
+        <form id="signupForm" class="login-form" autocomplete="off">
+            <div class="field">
+                <label class="field__label" for="signup-username" data-i18n="login.field.user">用户名</label>
+                <input class="input" id="signup-username" name="username" type="text" required maxlength="64">
+            </div>
+            <div class="field">
+                <label class="field__label" for="signup-email" data-i18n="login.field.email">邮箱</label>
+                <input class="input" id="signup-email" name="email" type="email" required maxlength="128" placeholder="you@example.com" autocomplete="email">
+            </div>
+            <div class="field">
+                <label class="field__label" for="signup-phone" data-i18n="login.field.phone">联系电话</label>
+                <input class="input" id="signup-phone" name="phone_number" type="tel" required maxlength="32" placeholder="13800138000" autocomplete="tel">
+            </div>
+            <div class="field">
+                <label class="field__label" for="signup-password" data-i18n="login.field.pw">密码</label>
+                <input class="input" id="signup-password" name="password" type="password" required maxlength="128" autocomplete="new-password">
+                <div class="password-strength" aria-hidden="true">
+                    <div class="password-strength__bar" data-i="1"></div>
+                    <div class="password-strength__bar" data-i="2"></div>
+                    <div class="password-strength__bar" data-i="3"></div>
+                    <div class="password-strength__bar" data-i="4"></div>
+                </div>
+            </div>
+            <div class="field">
+                <label class="field__label" for="signup-confirm" data-i18n="login.field.confirm">确认密码</label>
+                <input class="input" id="signup-confirm" name="confirmPassword" type="password" required maxlength="128" autocomplete="new-password">
+            </div>
+            <div class="field">
+                <label class="field__label" for="signup-notes" data-i18n="login.field.notes">备注（可选）</label>
+                <input class="input" id="signup-notes" name="notes" type="text" maxlength="200" data-i18n-attr="placeholder" data-i18n="login.field.notesPh" placeholder="用途、负责人">
+            </div>
+            <ul class="password-rules" id="ruleList">
+                <li data-rule="length"  data-i18n="login.rule.length">长度需 8 位以上</li>
+                <li data-rule="case"    data-i18n="login.rule.case">含大小写字母</li>
+                <li data-rule="digit"   data-i18n="login.rule.digit">含数字</li>
+                <li data-rule="special" data-i18n="login.rule.special">含特殊字符</li>
+                <li data-i18n="login.rule.expire">有效期 90 天，到期回收所有权限</li>
+                <li data-i18n="login.rule.reuse">不得与之前三次使用的密码相同</li>
+            </ul>
+            <button class="btn btn--primary btn--lg" type="submit" data-i18n="login.btn.signup">注册</button>
+        </form>
+
+        <p class="login-card__footer" data-i18n="login.footer">© 网络设备权限系统</p>
+    </main>
+
+    <script type="module" src="/static/js/login.js"></script>
+</body>
+</html>

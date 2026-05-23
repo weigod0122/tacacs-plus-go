@@ -1,0 +1,28 @@
+http: "0.0.0.0:8383"#可指定监听ip
+
+manager: ""#服务负责人的飞书用户ID，进程 panic 时会通过飞书卡片通知该用户
+
+log_file_path: "./logs/"#日志文件目录（client_app.log / client_tac_plus_*.log 落在这里。三服务共用同一目录时按 server_/client_/swm_ 前缀区分）
+
+#client 只用只读账号 —— 授权热路径全部走本地缓存 + read 库,
+#不需要也不应该在 client 主机配置文件里持有 write 账号密码。
+#启动时 db.Init 检测到 item=client 后只装载 read 连接,DbWrite 维持 nil。
+database:
+  prod:
+    read:
+      username: "user_read"
+      password: "password"
+      address: "ip:port"#实际数据库ip:port
+      table: "table"#实际表名
+  test:
+    read:
+      username: "user_test_read"
+      password: "password"
+      address: "ip:port"#实际数据库ip:port
+      table: "table"#实际表名
+
+tacPlus:
+  ip: "0.0.0.0"#可指定监听ip
+  port: "49"#可指定监听端口
+  shareKey: "shareKey"#需要接入tacacs的设备上配置的预共享秘钥
+  dscp: "0"#DSCP标记值(0-63)，用于QoS流量分类，0表示不设置

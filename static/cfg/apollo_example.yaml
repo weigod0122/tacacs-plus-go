@@ -1,0 +1,5 @@
+app_id: "your-app-id"
+cluster: "default"
+ip: "http://apollo-configserver.xxxx.com"
+namespace: "application"
+secret: "your-secret-here"

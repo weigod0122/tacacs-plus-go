@@ -1,0 +1,34 @@
+http: "0.0.0.0:8897"#服务端监听
+
+manager: ""#服务负责人的飞书用户ID，进程 panic 时会通过飞书卡片通知该用户
+
+tacacs_manager_url: "http://localhost:8899"#后端 tacacs-server 的 HTTP 地址
+
+#session会话超时时长，单位分钟，默认10分钟
+session_time_out: 10
+
+#日志文件目录（swm_app.log / swm_audit.log 都会落在这里。
+#三服务共用同一目录时按 server_/client_/swm_ 前缀区分,避免互相覆盖）。留空则回退到 ./log/
+log_file_path: "./logs/"
+
+#HTTPS 证书路径。两个都留空（或不写）则降级到明文 HTTP 监听。
+#明文 HTTP 模式只适合两种场景:
+#  1. 前面挂 HTTPS 反代终结 TLS（nginx/ALB），swm 跑在反代后的内网 HTTP；
+#  2. 仅本机开发 自连，浏览器地址栏用 http://localhost 或 http://127.0.0.1
+#     （浏览器把回环地址视为 secure context，是个明文 HTTP 的特例）。
+#用 LAN IP / 域名（含 *.local）直连 HTTP 都不在 secure context 内，
+#swm 设置的 Secure cookie 会被浏览器丢弃，登录走不通——这种场景必须走方案 1。
+#两个都填则启用 HTTPS。只填一个会被视作配置错误，启动直接失败。
+cert_file: ""
+key_file: ""
+
+#与 tacacs-server 的共享密钥（HMAC 签名用）。优先级 env > file > 明文
+swm_shared_secret_env: "SWM_SHARED_KEY"
+swm_shared_secret_file: ""
+swm_shared_secret: "shared_secret"#与 server 端 swm_auth.shared_secret 保持一致
+
+#飞书通知（进程 panic 告警）
+feishu:
+  enabled: true
+  app_id_env: "FEISHU_APP_ID"#优先从环境变量读取
+  app_secret_env: "FEISHU_APP_SECRET"#优先从环境变量读取

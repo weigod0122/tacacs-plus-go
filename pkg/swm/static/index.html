@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>网络设备权限系统 · 权限审批</title>
+    <meta name="color-scheme" content="light">
+    <link rel="stylesheet" href="/static/css/tokens.css">
+    <link rel="stylesheet" href="/static/css/base.css">
+    <link rel="stylesheet" href="/static/css/components.css">
+    <link rel="stylesheet" href="/static/css/layout.css">
+</head>
+<body data-username="{{.CurrentUser}}" data-is-admin="{{if .IsAdmin}}1{{else}}0{{end}}">
+    <div class="app">
+        <aside class="sidebar" id="sidebar-aside">
+            <div class="sidebar__brand">
+                <span class="sidebar__brand-mark" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 21s8-4 8-10V5l-8-3-8 3v6c0 6 8 10 8 10z"/>
+                        <path d="m9 12 2 2 4-4"/>
+                    </svg>
+                </span>
+                <span id="sidebar-brand-text">网络设备权限系统</span>
+            </div>
+            <nav class="sidebar__nav" id="sidebar-nav"></nav>
+        </aside>
+
+        <header class="topbar">
+            <h1 class="topbar__title" id="topbar-title">网络设备权限系统</h1>
+            <div class="topbar__user">
+                <button class="btn btn--ghost btn--sm topbar__lang" id="langBtn" type="button">EN</button>
+                <button class="topbar__user-name" id="userBtn" type="button">{{.CurrentUser}}</button>
+                <span id="userStatus"></span>
+                {{if .IsAdmin}}<span class="badge badge--info" id="adminBadge">管理员</span>{{end}}
+                <button class="btn btn--ghost btn--sm" id="logoutBtn" type="button">退出</button>
+            </div>
+        </header>
+
+        <main class="main" id="app-main" tabindex="-1">
+            <div style="padding: 48px; text-align: center; color: var(--color-text-subtle)" id="initial-loading">
+                正在加载…
+            </div>
+        </main>
+    </div>
+
+    <script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
