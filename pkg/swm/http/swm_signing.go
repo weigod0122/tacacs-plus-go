@@ -18,8 +18,10 @@ import (
 // 还没有真实用户上下文（或不应代表某个真实用户）。共享密钥签名证明请求来自
 // SwM 进程，X-SwM-Is-Admin=1 让后端的 admin-only 接口（比如 /get-admin）放行。
 //
-// 后端 handler 不读 X-SwM-User 头，仅审计日志会记录这个名字——能在日志里跟真实
-// 用户调用区分开。
+// 后端中间件 swmAuthMiddleware 会读 X-SwM-User / X-SwM-Is-Admin 头做 ACL 拦截
+// （admin-only 路径、ownership 校验、审计日志）；两个头都已纳入 HMAC 签名 base，
+// 第三方无法篡改，但持密钥者（SwM 本体）可以自由声明任意身份。本常量仅用于
+// SwM 内部直调场景下"无真实用户"时的占位身份，便于在审计日志里和真实用户调用区分开。
 const swmSystemUser = "__swm-system__"
 
 // computeSignatureHeader 计算 X-SwM-Signature 的完整头值（"t=...,n=...,v1=..."）。
