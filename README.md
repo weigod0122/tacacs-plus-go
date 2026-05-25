@@ -1,8 +1,8 @@
-<div align="center">
+span
 
 # TACACS+ Authentication System
 
-**企业级 TACACS+ 鉴权与权限管理一体化平台**
+**企业级 TACACS+ 网络设备鉴权与权限管理一体化平台**
 
 *Enterprise-grade TACACS+ AAA platform with built-in management portal & ACL*
 
@@ -34,6 +34,8 @@
 - [📦 目录结构](#-目录结构)
 - [⚖️ 负载均衡](#️-负载均衡)
 - [⚡ 性能与缓存设计](#-性能与缓存设计)
+- [🌐 网络与运维原生能力](#-网络与运维原生能力)
+- [📝 日志收集与归档](#-日志收集与归档)
 - [🔌 端口与协议](#-端口与协议)
 - [📜 License](#-license)
 
@@ -42,16 +44,22 @@
 ## ✨ 核心特性
 
 
-| 维度                 | 能力                                                                                   |
-| -------------------- | -------------------------------------------------------------------------------------- |
-| 🔐**协议合规**       | 完整实现 TACACS+ (RFC 8907) Authentication / Authorization / Accounting                |
-| 🌐**一体化前端**     | SwM 反向代理 + ACL 鉴权层,统一入口 HTTPS :8897                                         |
-| ⚡**高性能缓存**     | 用户/密码/命令三层缓存,授权热路径毫秒级响应                                            |
-| 🔄**2 秒级权限同步** | 数据库触发器驱动版本号,权限变更最慢 2 秒生效                                           |
-| 🛡️**密码安全**     | bcrypt 哈希存储,密码字段永不明文外泄                                                   |
-| 📊**飞书集成**(可选) | 卡片消息 + 应用内/短信/电话加急,审批/告警/通知一站式;不接入也能在 SwM 前端走完整审批流 |
-| 🧰**运维友好**       | 命令模板 / 角色模板 / 服务器模板 / 值班白名单全部 Web 化管理                           |
-| 🔧**水平扩展**       | Client 边缘节点无状态,四层/七层 LB 即可扩容                                            |
+| 维度                      | 能力                                                                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| 🔐**协议合规**            | 完整实现 TACACS+ (RFC 8907) Authentication / Authorization / Accounting                                                                       |
+| 🌐**一体化前端**          | SwM 反向代理 + ACL 鉴权层,统一入口 HTTPS :8897                                                                                                |
+| ⚡**高性能缓存**          | 用户/密码/命令三层缓存,授权热路径毫秒级响应                                                                                                   |
+| 🔄**2 秒级权限同步**      | 数据库触发器驱动版本号,权限变更最慢 2 秒生效                                                                                                  |
+| 🛡️**密码安全**          | bcrypt 哈希存储,密码字段永不明文外泄                                                                                                          |
+| 📡**DSCP 全链路打标**     | TACACS+ 报文在监听器/拨号器 socket 选项层就设置 IP_TOS / IPV6_TCLASS,**三次握手包起**就携带 DSCP,无损网络场景下认证/授权报文走 EF/AF 队列免丢 |
+| 🚀**TCP 链路调优**        | 边缘 Client`SetNoDelay` 关 Nagle、`SetKeepAlive` + 30s 探活,降低首包延迟、防 NAT 老化导致的"幽灵连接"                                         |
+| 🔁**Single-Connect 复用** | 完整支持 RFC 8907 Single Connection Mode,一条 TCP 复用 N 个 AAA 会话,节省网络设备侧握手成本                                                   |
+| 🚧**多层防滥用闸门**      | Server 1MB body 上限、Client`/health` 全局 2 QPS 令牌桶、登录 5 次/15 分钟自动锁定、IP CIDR 白名单四道闸,默认开箱即安全                       |
+| 🌐**浏览器侧硬化**        | CSP/HSTS/X-Frame-Options/Permissions-Policy 等 7 项安全响应头,CSRF 双提交 + 恒时比较防时序攻击                                                |
+| 🚨**进程崩溃飞书加急**    | `defer recover` 捕获 panic 后向 `manager` 发送红色加急卡片,值班人员秒级感知                                                                   |
+| 📊**飞书集成**(可选)      | 卡片消息 + 应用内/短信/电话加急,审批/告警/通知一站式;不接入也能在 SwM 前端走完整审批流                                                        |
+| 🧰**运维友好**            | 命令模板 / 角色模板 / 服务器模板 / 值班白名单全部 Web 化管理                                                                                  |
+| 🔧**水平扩展**            | Client 边缘节点无状态,四层/七层 LB 即可扩容                                                                                                   |
 
 ---
 
@@ -172,14 +180,14 @@ sequenceDiagram
 **🛡️ 强制部署约束**
 
 
-| # | 约束                                                                                                       | 不满足的后果                                                |
-| -: | ---------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| 1 | **Server 监听地址必须是 `127.0.0.1:8899` 或仅对 SwM 主机开放的内网 IP**,**严禁**暴露到公网或办公网         | 任何持密钥者可越权操作                                      |
-| 2 | **`swm_auth.shared_secret` 必须使用强随机值**(建议 `openssl rand -base64 48`),且 SwM 与 Server 严格一致    | 弱密钥可被爆破,等价于 #1 失守                               |
-| 3 | **`swm_auth.enforce: true` 生产环境必须开启**                                                              | 关闭后任何匿名请求都能直达 Server                           |
+| # | 约束                                                                                                                                                                                                                                                                                                                                                                        | 不满足的后果                                                                    |
+| -: | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| 1 | **Server 监听地址必须是 `127.0.0.1:8899` 或仅对 SwM 主机开放的内网 IP**,**严禁**暴露到公网或办公网                                                                                                                                                                                                                                                                          | 任何持密钥者可越权操作                                                          |
+| 2 | **`swm_auth.shared_secret` 必须使用强随机值**(建议 `openssl rand -base64 48`),且 SwM 与 Server 严格一致                                                                                                                                                                                                                                                                     | 弱密钥可被爆破,等价于 #1 失守                                                   |
+| 3 | **`swm_auth.enforce: true` 生产环境必须开启**                                                                                                                                                                                                                                                                                                                               | 关闭后任何匿名请求都能直达 Server                                               |
 | 4 | **生产环境必须走 HTTPS**:要么填 `cfg_swm.yaml` 的 `cert_file` / `key_file` 让 swm 自跑 HTTPS,要么在前面挂 nginx/ALB 反代终结 TLS(反代场景下两个字段可留空,swm 降级明文 HTTP)。HTTP 模式仅在 **本机用 `http://localhost` / `127.0.0.1` 直连开发**时勉强能用(浏览器把回环视为 secure context),**任何用 LAN IP / 域名访问 HTTP 的场景都会因 Secure cookie 不被接受而登录失败** | 中间人可截获 session cookie;且非回环 HTTP 访问下 cookie 被浏览器丢弃,登录走不通 |
-| 5 | **数据库账号严格区分读写**:Client 用只读账号,Server 用读写账号                                             | 边缘节点失陷可改库                                          |
-| 6 | **跨机部署务必显式设置 `swm_auth.allowed_cidrs`**(默认仅放行 `127.0.0.1/32` + `::1/128`)                   | 配错=同机白名单挡掉所有真实请求;不配=对外暴露时 #1 防线裸奔 |
+| 5 | **数据库账号严格区分读写**:Client 用只读账号,Server 用读写账号                                                                                                                                                                                                                                                                                                              | 边缘节点失陷可改库                                                              |
+| 6 | **跨机部署务必显式设置 `swm_auth.allowed_cidrs`**(默认仅放行 `127.0.0.1/32` + `::1/128`)                                                                                                                                                                                                                                                                                    | 配错=同机白名单挡掉所有真实请求;不配=对外暴露时 #1 防线裸奔                     |
 
 > **关于 #6 的兜底机制**:Server 在签名校验之前先按源 IP 兜底拒绝。默认配置(`allowed_cidrs` 留空)只放行本机回环,适合「SwM 与 Server 同机部署」的开箱即用场景。跨机部署需在 `cfg_server.yaml` 的 `swm_auth.allowed_cidrs` 显式列出 SwM 主机的 IP 或网段(CIDR 格式,单 IP 必须带 `/32` 或 `/128` 后缀)。
 
@@ -215,7 +223,7 @@ sequenceDiagram
 | **Go**    | `>= 1.26`                   | 编译 server/client/swm 三个二进制                        |
 | **MySQL** | `>= 5.7` 或 `8.0`           | InnoDB 引擎 (用于触发器 + 行锁)                          |
 | **OS**    | Linux / macOS               | 支持 amd64、arm64 架构                                   |
-| **网络**  | TCP 49 / 8383 / 8897 / 8899 | 分别对应 TACACS+ / Client HTTP / SwM HTTPS / Server HTTP |
+| **网络**  | TCP 49 / 8383 / 8897 / 8899 | 分别对应 TACACS+ / Client HTTP / SwM HTTP(或 HTTPS,取决于是否填了 TLS 证书) / Server HTTP |
 
 **环境变量**
 
@@ -306,27 +314,15 @@ mysql -u $USER -p $DB < static/sql/tacacs_meta.sql
 
 ### ③ 配置文件
 
-**Step 3.1 — 拷贝模板并填空**
+平台支持两种配置加载方式:**Apollo 配置中心**(推荐生产)和**本地 YAML 文件**(Apollo 不可用时的回退)。
 
-```bash
-cp static/cfg/cfg_client_example.yaml cmd/client/cfg.yaml
-cp static/cfg/cfg_server_example.yaml cmd/server/cfg.yaml
-cp static/cfg/cfg_swm_example.yaml    cmd/swm/cfg.yaml
-```
+> 💡 **配置加载优先级**:Apollo > 本地文件(`-c`) > 报错。指定了 `-c cfg.yaml` 也不影响优先级 —— Apollo 可用就优先用 Apollo,Apollo 不可用时自动回退到本地文件。完全不接入 Apollo 时,Apollo 初始化失败不影响本地配置加载。
 
-按各 yaml 内的注释填写数据库连接、监听地址、共享密钥等。三份文件的关系:
+**Step 3.1 — Apollo 配置中心(推荐)**
 
-```
-cfg_server.yaml   ← 数据库 + 飞书 + 监听 8899
-cfg_client.yaml   ← 数据库(只读) + TACACS 共享密钥 + 监听 49(TACACS+) + 8383(HTTP /health)
-cfg_swm.yaml      ← TLS 证书(可选,留空降级 HTTP)+ 反代目标 + 监听 8897
-```
+> 💡 **为什么推荐?** 接入 Apollo 后可以在不重启服务的情况下:动态切换 debug 日志模式、实时更新值班人员列表、热更新服务配置。多机部署时还能避免到每台主机改 yaml,配置漂移风险天然消除。
 
-**Step 3.2 — Apollo 配置中心(可选,强烈推荐)**
-
-> 💡 **为什么推荐?** 接入 Apollo 后可以在不重启服务的情况下:动态切换 debug 日志模式、实时更新值班人员列表、热更新服务配置。
-
-如果使用 Apollo 管理配置,需要准备 Apollo 连接信息:
+准备 Apollo 连接信息:
 
 ```bash
 cp static/cfg/apollo_example.yaml apollo.yaml
@@ -343,8 +339,6 @@ export APOLLO_NAMESPACE="application"
 export APOLLO_SECRET="your-secret"
 ```
 
-> 💡 **配置加载优先级**: Apollo > 本地文件(`-c`) > 报错。即使指定了 `-c cfg.yaml`,只要 Apollo 可用就优先使用 Apollo 的配置;Apollo 不可用时自动回退到本地文件。不使用 Apollo 时,Apollo 初始化失败不影响本地配置加载。
->
 > Cluster 通过 `apollo.yaml` 的 `cluster` 字段或环境变量 `APOLLO_CLUSTER` 指定,默认值为 `default`。
 
 **Apollo 中的 Key 与配置内容**
@@ -479,6 +473,32 @@ true
 设为 `true` 开启 debug 日志,`false` 关闭。通过 Apollo 变更监听实时生效,无需重启。
 
 </details>
+
+**Step 3.2 — 本地 YAML 文件(Apollo 不可用时的回退)**
+
+未接入 Apollo、Apollo 暂时不可达、或本地开发自测时,改用本地文件做配置源:
+
+```bash
+cp static/cfg/cfg_client_example.yaml cmd/client/cfg.yaml
+cp static/cfg/cfg_server_example.yaml cmd/server/cfg.yaml
+cp static/cfg/cfg_swm_example.yaml    cmd/swm/cfg.yaml
+```
+
+按各 yaml 内的注释填写数据库连接、监听地址、共享密钥等。三份文件的关系:
+
+```
+cfg_server.yaml   ← 数据库 + 飞书 + 监听 8899
+cfg_client.yaml   ← 数据库(只读) + TACACS 共享密钥 + 监听 49(TACACS+) + 8383(HTTP /health)
+cfg_swm.yaml      ← TLS 证书(可选,留空降级 HTTP)+ 反代目标 + 监听 8897
+```
+
+启动时用 `-c` 指定路径(同样适用于 Apollo 不可达时的兜底):
+
+```bash
+./build/<os>_<arch>/server -c cmd/server/cfg.yaml
+```
+
+> 字段细节与 Apollo 的 `server` / `client` / `swm` 三个 Key **完全一致** —— 上方折叠面板里的 YAML 即可直接作为本地文件的模板。`on_duty` / `debug` 这两个 Key 是 Apollo 专属的运行时热更新通道,本地文件模式下没有等价能力(值班名单只能靠 SQL + 进程重启同步,debug 模式由启动参数固定)。
 
 > ⚠️ **注意**: `server` 的 `swm_auth.shared_secret` 和 `swm` 的 `swm_shared_secret` 必须保持一致,否则 SwM 到 Server 的请求签名校验会失败。
 
@@ -841,17 +861,199 @@ flowchart LR
 
 ---
 
+## 🌐 网络与运维原生能力
+
+除"业务逻辑"以外,平台在网络栈和运维体感上做了一批专门优化,大多是"装好就生效、不需要额外配置"的原生能力。
+
+### 📡 DSCP 全链路打标(无损网络必备)
+
+TACACS+ 通常和生产网管面共用链路,一旦设备/链路抖动出现拥塞,认证报文被丢就意味着运维和业务全部失联。DSCP 打标可以让 AAA 报文在交换机的 QoS 队列里享有 EF/AF 优先级,显著降低拥塞时的丢包率。
+
+**这里和其他实现的关键差异**:
+
+
+|                  | 仅`setsockopt(IP_TOS)` 在已建立的连接上 | 本项目                                                             |
+| ---------------- | --------------------------------------- | ------------------------------------------------------------------ |
+| SYN/ACK 三次握手 | **不带 DSCP**(socket 还没建好)          | **带 DSCP**(在 `ListenConfig.Control` / `Dialer.Control` 里就预置) |
+| RST/FIN 拆链     | 取决于 socket 是否回收                  | 一致带 DSCP                                                        |
+| IPv6 双栈        | 多数实现仅打 IPv4                       | IPv4 走`IP_TOS`、IPv6 走 `IPV6_TCLASS`,自动判别                    |
+
+配置只需在 `cfg_client.yaml` 填一个 0~63 的值即可,留空或 `"0"` 表示不打标:
+
+```yaml
+tacPlus:
+  ip: "0.0.0.0"
+  port: "49"
+  shareKey: "your-tacacs-shared-key"
+  dscp: "46"     # EF (Expedited Forwarding),适合关键控制面流量
+```
+
+### 🚀 TCP 链路调优
+
+边缘 Client 接受到的每一条 TACACS+ TCP 连接,都会立即设置:
+
+- `SetNoDelay(true)` — 关闭 Nagle 算法,小包(认证请求平均几十字节)立刻发送,不再凑 MSS。**首包延迟降低一个 RTT**。
+- `SetKeepAlive(true) + SetKeepAlivePeriod(30s)` — 网络设备到 Client 的长连接经过 NAT/防火墙时,30 秒一次的 keepalive 探活能避免会话表老化导致的"半开/幽灵连接"。
+
+### 🔁 Single-Connect 多路复用
+
+完整支持 RFC 8907 §4.5.1 Single Connection Mode。开启后一台网络设备的多次 AAA 会话(同一用户多条命令、不同用户的认证 + 授权 + 计费)可以**复用同一条 TCP**,显著减少 TCP 握手开销。日志里 `isSingleConnect: true` 字段直接体现。
+
+### 🚧 多层防滥用闸门
+
+每一层都是"装好就生效",无需额外配置:
+
+
+| 层                   | 限制                                                                   | 触发后行为                        |
+| -------------------- | ---------------------------------------------------------------------- | --------------------------------- |
+| **Server HTTP**      | `body ≤ 1MB`(MaxBytesReader)                                          | 413 + 「拆成多次/用模板」可读提示 |
+| **Client HTTP**      | `/health` 全局 2 QPS 令牌桶                                            | 429 + 限速原因                    |
+| **SwM `/login`**     | 单 IP 5 次/分钟,失败 5 次锁 15 分钟                                    | 429 + 锁定提示 + 审计日志         |
+| **Server IP 白名单** | 默认仅放行`127.0.0.1/32`+`::1/128`,跨机部署填 `swm_auth.allowed_cidrs` | 403 + 审计日志,签名校验之前先拒   |
+
+### 🌐 浏览器侧硬化
+
+SwM 默认下发 7 项标准安全响应头:`Content-Security-Policy`(同源 default-src 'self')、`Strict-Transport-Security`(HSTS 1 年)、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: same-origin`、`Permissions-Policy`(关闭地理/相机/麦克风/支付)、`Cross-Origin-Opener-Policy: same-origin`。CSRF 采用 session 绑定的 token + `subtle.ConstantTimeCompare`,防时序攻击。
+
+### 🚨 进程崩溃飞书加急
+
+Server / Client / SwM 三个进程的 `main()` 都用 `defer recover()` 兜底,捕获到 panic 后:
+
+1. 把堆栈写进 `*_app.log`
+2. 向 `cfg.manager`(飞书用户 ID)发送**红色加急卡片**(应用内 + 短信 + 电话三连)
+3. 进程退出后由 `deploy.sh` 或 systemd/k8s 拉起
+
+留空 `manager` 字段即关闭告警,日志依然落盘。
+
+---
+
+## 📝 日志收集与归档
+
+平台所有持久化输出都是**纯文件日志**(没有内置查询服务、没有写库),三个进程共用 `log_file_path` 目录,靠文件名前缀互不覆盖。
+
+### 📂 落盘清单
+
+
+| 进程   | 文件                          | 内容                                                     | 切片       |
+| ------ | ----------------------------- | -------------------------------------------------------- | ---------- |
+| Server | `server_app.log`              | 应用日志(业务异常、定时任务、panic 堆栈)                 | 按天       |
+| Server | `server_audit.log`            | 管理员写操作、签名校验失败                               | 按天       |
+| Server | `server_http_api.log`         | gin HTTP 访问日志                                        | 按天       |
+| Client | `client_app.log`              | 应用日志、缓存重建、panic 堆栈                           | 按天       |
+| Client | `client_tac_plus_authen.log`  | TACACS+ 认证流水(每行 JSON)                              | **按小时** |
+| Client | `client_tac_plus_author.log`  | TACACS+ 授权流水(每行 JSON)                              | **按小时** |
+| Client | `client_tac_plus_account.log` | TACACS+ 记账流水,即"谁在哪台设备敲了什么命令"(每行 JSON) | **按小时** |
+| SwM    | `swm_app.log`                 | 应用日志、panic 堆栈                                     | 按天       |
+| SwM    | `swm_audit.log`               | 登录成功/失败、登出、管理员写操作、CSRF 失败、未授权访问 | 按天       |
+
+> 🔢 **协议三件套(`client_tac_plus_*.log`)的字段定义**在 `pkg/public/tacplus/struct.go`,典型记账行包含 `time / user / switchAddr / serverAddr / cmd / arg[] / privLvl / authenMethod / isSingleConnect / tacacsClient` 等键,sonic 序列化,小驼峰命名。Client 节点越多、设备越活跃,这个文件增长越快,**优先纳入集中收集**。
+
+### ⚠️ 前端"日志"页:后端接口尚未适配
+
+SwM 管理员视图下保留了「日志」入口(`static/js/pages/log.js`),设计上调用 `GET /tacacs/log/get/simple?date=YYYY-MM-DD` 拉一整天的 `client_tac_plus_account.log` 内容做客户端分面筛选。当前版本**后端 Server 没有注册这个路由**,直接打开页面会收到 404 / 502;`adminOnlyPrefixes` 已经把 `/tacacs/log/` 列为管理员独占前缀,但后端 handler 仍是 TODO。
+
+在后端 handler 补齐之前,**请把日志查询能力放到外部存储里完成**(ES / Loki / ClickHouse / Splunk 任选),前端页面可以临时隐藏或忽略 —— 这也是更可扩展的方案,因为内置接口受限于单文件、单日、无分页、需要 admin 在线浏览器查的几个硬约束,扛不住生产规模的协议流水。
+
+### 🛰️ 推荐做法:Client 侧采集 → 集中存储 → 本地定期清理
+
+**(1) 在每个 Client 节点装一个轻量采集器**,把日志推到统一存储:
+
+
+| 采集器                   | 适合场景                            |
+| ------------------------ | ----------------------------------- |
+| **Filebeat**             | 已有 ELK / Elastic 栈               |
+| **Fluent Bit / Fluentd** | K8s / 多目的地分流                  |
+| **Vector**               | 多目的地、需要在边缘做轻量解析/路由 |
+| **Promtail**             | 已有 Grafana Loki                   |
+
+`client_tac_plus_*.log` 已经是单行 JSON,采集器直接 `json` decode 即可,不需要写 grok / 正则。给一个 Filebeat 最小示例:
+
+```yaml
+# /etc/filebeat/filebeat.yml(Client 节点)
+filebeat.inputs:
+  - type: filestream
+    id: tacacs-acct
+    paths:
+      - /var/log/tacacs/client_tac_plus_account.log*
+    parsers:
+      - ndjson:
+          target: ""        # 把 JSON 字段提升到事件顶层
+          add_error_key: true
+    fields:
+      log_type: tacacs_account
+      tacacs_node: ${HOSTNAME}
+    fields_under_root: true
+
+  - type: filestream
+    id: tacacs-authen
+    paths:
+      - /var/log/tacacs/client_tac_plus_authen.log*
+    parsers:
+      - ndjson:
+          target: ""
+    fields:
+      log_type: tacacs_authen
+
+  - type: filestream
+    id: tacacs-author
+    paths:
+      - /var/log/tacacs/client_tac_plus_author.log*
+    parsers:
+      - ndjson:
+          target: ""
+    fields:
+      log_type: tacacs_author
+
+output.elasticsearch:
+  hosts: ["https://es.internal:9200"]
+  index: "tacacs-%{[log_type]}-%{+yyyy.MM.dd}"
+```
+
+> 💡 注意 paths 末尾的 `*` —— 由于按小时切片,实际文件名形如 `client_tac_plus_account.log2026010210`,glob 通配是必须的。
+
+**(2) ES / 目标存储侧做 index template + ILM**,按需做热温冷分层、保留窗口(常见 30 / 90 / 180 天),把"查询能力"外移:这才能做`switchAddr` / `user` / `cmd` 任意维度任意时间范围的聚合,远比前端页面强。
+
+**(3) Client 节点本地定期清理**,避免协议日志把磁盘吃满。任选其一即可:
+
+```bash
+# 方案 A: logrotate(系统级,推荐)
+cat >/etc/logrotate.d/tacacs <<'EOF'
+/var/log/tacacs/*.log /var/log/tacacs/*.log* {
+    daily
+    rotate 7              # 本地最多保留 7 天,采集器应已上报到 ES
+    missingok
+    notifempty
+    nocompress            # 已是 JSON 文本,压不压缩看磁盘紧张程度
+    copytruncate          # 不重启进程的前提下截断;采集器靠 inode 跟踪要避坑见下
+}
+EOF
+```
+
+```bash
+# 方案 B: cron + find(简单粗暴)
+# 每天凌晨 3:17 删除 7 天前的所有日志文件
+17 3 * * *  find /var/log/tacacs -type f -name '*.log*' -mtime +7 -delete
+```
+
+> ⚠️ **`copytruncate` 与采集器位点的坑**:Filebeat/Fluent Bit 默认按 inode 追踪文件偏移,`copytruncate` 不换 inode 而是把文件截断,采集器看到的"长度变短"会被当成轮转事件 —— 一般能正常处理,但偶发会丢/重最后一两条。如果数据完整性要求高,改用不带 `copytruncate` 的 logrotate(配合 `postrotate` 给进程发信号重开文件),或者直接让采集器自己按 `*` glob 滚动文件(本项目自带的按天/按小时文件名天然符合),把 logrotate 退化成"只做删除"的工具。
+
+**(4) Server / SwM 的 `*_audit.log` 是合规留痕来源**,本地保留周期建议覆盖审计回溯窗口(常见 180 ~ 365 天),或者也走 ES 集中化 + 单独索引 + 更长 ILM 保留策略。`*_app.log` 排障用,7 ~ 30 天足够。
+
+### 📋 一句话总结
+
+> 把 `client_tac_plus_*.log`(以及审计日志)纳入集中式日志栈,**用 ES / Loki 做查询**;Client 本地只做最近 7 天的暂存,用 logrotate / cron 滚删。前端"日志"页对应的后端接口尚未实现,生产环境**不要**依赖该入口。
+
+---
+
 ## 🔌 端口与协议
 
 
-|     端口 | 协议          | 进程   | 暴露范围                                                |
-| -------: | ------------- | ------ | ------------------------------------------------------- |
-|   **49** | TACACS+ (TCP) | Client | 网络设备 → Client                                      |
-| **8383** | HTTP          | Client | 运维探活/健康检查 (仅`/health`,全局限速 2 QPS,建议内网) |
-| **8897** | HTTPS         | SwM    | 浏览器 → SwM                                           |
-| **8899** | HTTP          | Server | 仅 SwM → Server (建议绑 127.0.0.1)                     |
-
-DSCP 标记可在 Client 配置文件里指定(`tacPlus.dscp`),用于运营商网络 QoS。
+|     端口 | 协议          | 进程   | 暴露范围                                                       |
+| -------: | ------------- | ------ | -------------------------------------------------------------- |
+|   **49** | TACACS+ (TCP) | Client | 网络设备 → Client(DSCP 在 socket 选项层预置,三次握手起就带标) |
+| **8383** | HTTP          | Client | 运维探活/健康检查 (仅`/health`,全局限速 2 QPS,建议内网)        |
+| **8897** | HTTP / HTTPS  | SwM    | 浏览器 → SwM(`cert_file` + `key_file` 都填→HTTPS;都留空→HTTP,仅限 `localhost` / 127.0.0.1 直连开发) |
+| **8899** | HTTP          | Server | 仅 SwM → Server (建议绑 127.0.0.1)                            |
 
 ---
 
