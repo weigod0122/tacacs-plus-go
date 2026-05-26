@@ -53,8 +53,26 @@ export default async function renderRolePage(container) {
       class: "input", maxlength: 64, required: true,
       placeholder: t("role.create.namePh"),
     });
-    const serverPicker = buildPicker(serverNames);
-    const commandPicker = buildPicker(commandNames);
+
+    // 用户一旦自己改过名字,就不再被两个 picker 的联动覆盖;只有 input 事件
+    // 来自真实键入,程序设置 .value 不会触发,所以这个标志可信。
+    let nameTouched = false;
+    nameInput.addEventListener("input", () => { nameTouched = true; });
+
+    function refreshAutoName() {
+      if (nameTouched) return;
+      const srv = serverPicker.values();
+      const cmd = commandPicker.values();
+      if (srv.length === 0 || cmd.length === 0) {
+        nameInput.value = "";
+        return;
+      }
+      const raw = `server:${srv.join("+")}-cmd:${cmd.join("+")}`;
+      nameInput.value = raw.length > 64 ? raw.slice(0, 64) : raw;
+    }
+
+    const serverPicker = buildPicker(serverNames, { onChange: refreshAutoName });
+    const commandPicker = buildPicker(commandNames, { onChange: refreshAutoName });
 
     const errorEl = h("p", {
       class: "field__hint field__hint--error",
@@ -218,13 +236,17 @@ function chipsFor(value, type) {
 }
 
 /**
- * buildPicker(options) — always-visible search + checkbox list. Used inside
+ * buildPicker(options, opts) — always-visible search + checkbox list. Used inside
  * the create-role modal where the previous dropdown multiselect required
  * scrolling within a small panel.
  *
+ * opts.onChange — optional callback fired after each selection change (个项勾选、
+ * 全选、清空都会触发),用于联动外部状态(例如自动生成角色名)。
+ *
  * Returns { el, values() }.
  */
-function buildPicker(options) {
+function buildPicker(options, opts = {}) {
+  const { onChange } = opts;
   const selected = new Set();
   const itemMap = new Map();
 
@@ -244,6 +266,7 @@ function buildPicker(options) {
         else selected.delete(value);
         item.classList.toggle("is-checked", e.target.checked);
         updateCount();
+        onChange?.();
       },
     });
     const item = h("label", {
@@ -276,6 +299,7 @@ function buildPicker(options) {
         m.item.classList.add("is-checked");
       });
       updateCount();
+      onChange?.();
     },
   }, t("common.selectAll"));
 
@@ -288,6 +312,7 @@ function buildPicker(options) {
         m.item.classList.remove("is-checked");
       });
       updateCount();
+      onChange?.();
     },
   }, t("common.clear"));
 

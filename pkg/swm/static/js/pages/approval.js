@@ -457,7 +457,7 @@ export default async function renderPermissionPage(container, ctx) {
     return [
       {
         label: t("approval.action.recreate"), kind: "ghost",
-        onClick: () => openCreateModal(row.ApprovalPermissions || ""),
+        onClick: () => openCreateModal(row.ApprovalPermissions || "", row.User || ""),
       },
     ];
   }
@@ -507,15 +507,23 @@ export default async function renderPermissionPage(container, ctx) {
 
   const MAX_ACTIVE_ROLES_PER_USER = 200;
 
-  async function openCreateModal(defaultRole = "") {
-    const activeCount = allRows.filter(
-      (r) => r.User === username && r.Status === 4
-    ).length;
-    if (activeCount >= MAX_ACTIVE_ROLES_PER_USER) {
-      toast.error(
-        t("approval.create.error.activeCap", { n: activeCount, cap: MAX_ACTIVE_ROLES_PER_USER })
-      );
-      return;
+  // 计算指定用户当前生效角色数,与服务端的 per-user 上限对齐;申请前会在
+  // submit() 里再校验一次,避免管理员代申请时把上限算到管理员自己头上。
+  function activeRolesOf(user) {
+    return allRows.filter((r) => r.User === user && r.Status === 4).length;
+  }
+
+  async function openCreateModal(defaultRole = "", defaultTargetUser = "") {
+    // 非管理员只能给自己申请,所以可以提前做容量预检,体验上少弹一次 modal;
+    // 管理员目标用户在 modal 里选,容量检查推迟到 submit()。
+    if (!isAdmin) {
+      const activeCount = activeRolesOf(username);
+      if (activeCount >= MAX_ACTIVE_ROLES_PER_USER) {
+        toast.error(
+          t("approval.create.error.activeCap", { n: activeCount, cap: MAX_ACTIVE_ROLES_PER_USER })
+        );
+        return;
+      }
     }
 
     let roles = [];
@@ -527,24 +535,48 @@ export default async function renderPermissionPage(container, ctx) {
       return;
     }
 
+    // 仅管理员需要 user 列表;普通用户直接锁定自己,避免多发一个无用请求。
+    let userOptions = [username];
+    if (isAdmin) {
+      try {
+        const res = await api.get("/tacacs/user/get");
+        const rows = (res && res.data) || [];
+        const names = rows.map((r) => r.User).filter(Boolean);
+        // 用 Set 去重并保证当前用户始终在列表里(管理员账号在 user 表中也存在,
+        // 但保险起见兜个底)。
+        userOptions = Array.from(new Set([username, ...names]));
+      } catch (err) {
+        toast.error(t("approval.create.toast.loadUsersFailed") + (err.message || err));
+        return;
+      }
+    }
+
+    const initialTarget = defaultTargetUser && userOptions.includes(defaultTargetUser)
+      ? defaultTargetUser
+      : username;
+
     const today = new Date().toISOString().slice(0, 10);
-    const future = new Date(); future.setDate(future.getDate() + 30);
+    const future = new Date(); future.setDate(future.getDate() + 1);
     const defaultEnd = future.toISOString().slice(0, 10);
 
     let mode = "days";
     let submitting = false;
 
-    const roleSelect = h("select", { class: "select" }, [
-      h("option", { value: "", disabled: true, selected: !defaultRole }, t("approval.create.rolePlaceholder")),
-      ...roles.map((r) => h("option", {
-        value: r.Template,
-        selected: r.Template === defaultRole,
-      }, r.Template)),
-    ]);
+    // 管理员才渲染申请人选择器;普通用户字段直接省略,提交时用 username 填。
+    const userCombo = isAdmin
+      ? buildCombobox(userOptions, initialTarget, {
+          placeholder: t("approval.create.targetUserPlaceholder"),
+        })
+      : null;
+
+    const roleCombo = buildCombobox(
+      roles.map((r) => r.Template),
+      defaultRole,
+    );
 
     const daysInput = h("input", {
       type: "number", class: "input",
-      min: 1, max: 365, value: 30,
+      min: 1, max: 365, value: 1,
       placeholder: t("approval.create.daysPlaceholder"),
     });
     const daysBox = h("div", { class: "stack" }, [
@@ -636,9 +668,14 @@ export default async function renderPermissionPage(container, ctx) {
       novalidate: true,
       onsubmit: (e) => { e.preventDefault(); submit(); },
     }, [
+      userCombo ? h("div", { class: "field" }, [
+        h("label", { class: "field__label" }, t("approval.create.targetUser")),
+        userCombo.el,
+        h("p", { class: "field__hint" }, t("approval.create.targetUserHint")),
+      ]) : null,
       h("div", { class: "field" }, [
         h("label", { class: "field__label" }, t("approval.create.role")),
-        roleSelect,
+        roleCombo.el,
       ]),
       h("div", { class: "field" }, [
         h("label", { class: "field__label" }, t("approval.create.validity")),
@@ -662,9 +699,23 @@ export default async function renderPermissionPage(container, ctx) {
       if (submitting) return;
       errorEl.style.display = "none";
 
-      if (!roleSelect.value) return showError(t("approval.create.error.role"), roleSelect);
+      // 管理员从下拉里选,普通用户没有选择器、直接用自己。
+      const targetUser = userCombo ? userCombo.value : username;
+      if (!targetUser) {
+        return showError(t("approval.create.error.targetUser"), userCombo?.input);
+      }
 
-      const payload = { user: username, permission: roleSelect.value };
+      if (!roleCombo.value) return showError(t("approval.create.error.role"), roleCombo.input);
+
+      // 容量上限按"目标用户"算,管理员代申请不能把别人的额度算到自己头上。
+      const activeCount = activeRolesOf(targetUser);
+      if (activeCount >= MAX_ACTIVE_ROLES_PER_USER) {
+        return showError(
+          t("approval.create.error.activeCap", { n: activeCount, cap: MAX_ACTIVE_ROLES_PER_USER })
+        );
+      }
+
+      const payload = { user: targetUser, permission: roleCombo.value };
       if (mode === "days") {
         const days = Number(daysInput.value);
         if (!Number.isInteger(days) || days < 1 || days > 365) {
@@ -747,4 +798,143 @@ function inferColumns(rows) {
     if (k === "Status") return { key: k, label: tHeader("Status"), render: approvalStatusBadge };
     return { key: k, label: tHeader(k) };
   });
+}
+
+/**
+ * buildCombobox(options, defaultValue, opts) — searchable single-select.
+ * 一个普通 input 加下拉面板：点击展开全部、输入实时模糊过滤（不区分大小写
+ * 子串匹配），上下键移动高亮，回车 / 点击提交。`value` 仅在用户从列表中
+ * 真正选中后才更新——只输入但未确认会在失焦时还原显示,避免界面与提交值
+ * 不一致。返回 { el, input, get value() }。
+ *
+ * opts.placeholder — 输入框占位符,默认沿用 approval.create.rolePlaceholder。
+ */
+function buildCombobox(options, defaultValue, opts = {}) {
+  const placeholder = opts.placeholder || t("approval.create.rolePlaceholder");
+  let selected = options.includes(defaultValue) ? defaultValue : "";
+  let activeIdx = -1;
+  let items = [];
+
+  const input = h("input", {
+    type: "text", class: "input", autocomplete: "off",
+    spellcheck: "false",
+    placeholder,
+    value: selected,
+    role: "combobox",
+    "aria-autocomplete": "list",
+    "aria-expanded": "false",
+  });
+
+  const list = h("div", { class: "combobox__list", role: "listbox" });
+  const empty = h("div", { class: "combobox__empty" }, t("common.empty"));
+  empty.style.display = "none";
+  const panel = h("div", { class: "combobox__panel" }, [list, empty]);
+  const wrap = h("div", { class: "combobox" }, [input, panel]);
+
+  function render(filter) {
+    const needle = (filter || "").trim().toLowerCase();
+    const matches = needle
+      ? options.filter((o) => o.toLowerCase().includes(needle))
+      : options.slice();
+
+    while (list.firstChild) list.removeChild(list.firstChild);
+    items = matches.map((opt) => {
+      const node = h("div", {
+        class: ["combobox__item", opt === selected && "is-selected"],
+        role: "option",
+        "aria-selected": opt === selected ? "true" : "false",
+        onmousedown: (e) => { e.preventDefault(); commit(opt); },
+      }, opt);
+      list.appendChild(node);
+      return { value: opt, node };
+    });
+
+    activeIdx = items.findIndex((i) => i.value === selected);
+    if (activeIdx < 0 && items.length) activeIdx = 0;
+    paintActive();
+    empty.style.display = items.length ? "none" : "";
+  }
+
+  function paintActive() {
+    items.forEach((it, i) => it.node.classList.toggle("is-active", i === activeIdx));
+    if (activeIdx >= 0) {
+      const node = items[activeIdx].node;
+      const top = node.offsetTop;
+      const bottom = top + node.offsetHeight;
+      if (top < list.scrollTop) list.scrollTop = top;
+      else if (bottom > list.scrollTop + list.clientHeight) {
+        list.scrollTop = bottom - list.clientHeight;
+      }
+    }
+  }
+
+  function open() {
+    panel.classList.add("is-open");
+    input.setAttribute("aria-expanded", "true");
+    render(input.value === selected ? "" : input.value);
+  }
+
+  function close() {
+    panel.classList.remove("is-open");
+    input.setAttribute("aria-expanded", "false");
+    if (input.value !== selected) input.value = selected;
+  }
+
+  function commit(value) {
+    selected = value;
+    input.value = value;
+    close();
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  input.addEventListener("focus", open);
+  input.addEventListener("click", open);
+  input.addEventListener("input", () => {
+    if (!panel.classList.contains("is-open")) open();
+    else render(input.value);
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (!panel.classList.contains("is-open")) return open();
+      if (!items.length) return;
+      activeIdx = (activeIdx + 1) % items.length;
+      paintActive();
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!panel.classList.contains("is-open")) return open();
+      if (!items.length) return;
+      activeIdx = (activeIdx - 1 + items.length) % items.length;
+      paintActive();
+    } else if (e.key === "Enter") {
+      if (panel.classList.contains("is-open") && activeIdx >= 0 && items[activeIdx]) {
+        e.preventDefault();
+        commit(items[activeIdx].value);
+      }
+    } else if (e.key === "Escape") {
+      if (panel.classList.contains("is-open")) {
+        e.preventDefault();
+        close();
+      }
+    }
+  });
+
+  // 点击外部关闭。用 mousedown 而不是 click，避免与 onmousedown 选项冲突。
+  // modal 关闭后 wrap 会从 DOM 摘掉，监听器自行注销，避免反复开关 modal 后
+  // 在 document 上堆积一堆死引用。
+  const onDocDown = (e) => {
+    if (!wrap.isConnected) {
+      document.removeEventListener("mousedown", onDocDown);
+      return;
+    }
+    if (!panel.classList.contains("is-open")) return;
+    if (!wrap.contains(e.target)) close();
+  };
+  document.addEventListener("mousedown", onDocDown);
+
+  return {
+    el: wrap,
+    input,
+    get value() { return selected; },
+  };
 }

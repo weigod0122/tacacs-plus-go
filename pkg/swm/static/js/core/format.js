@@ -96,6 +96,19 @@ export function validateEmail(s) {
 }
 
 /**
+ * validateUsername(s) — 注册用户名字符集校验:仅允许 ASCII 字母 / 数字 /
+ * 下划线 / 点 / 短横线。中文、空格、shell 特殊字符全部拒绝。长度由 input 的
+ * maxlength 与后端共同保证,这里不重复检查。后端 handleCreateUser 必须执行
+ * 同一规则,前端校验只是 UX,绕过 JS 直接 POST 不能放过。
+ */
+export function validateUsername(s) {
+  const v = (s || "").trim();
+  if (!v) return t("fmt.username.empty");
+  if (!/^[A-Za-z0-9._-]+$/.test(v)) return t("fmt.username.charset");
+  return null;
+}
+
+/**
  * validatePhone(s) — accepts digits with optional + - space ( ) separators;
  * requires at least 7 digits. Returns null if valid, else a message.
  */

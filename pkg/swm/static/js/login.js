@@ -1,7 +1,7 @@
 // Login page logic — tabs, password strength, signup submission via fetch.
 
 import { qs, qsa } from "./core/dom.js";
-import { passwordStrength, validatePassword, validateEmail, validatePhone } from "./core/format.js";
+import { passwordStrength, validatePassword, validateEmail, validatePhone, validateUsername } from "./core/format.js";
 import { toast } from "./core/components/toast.js";
 import { t, toggleLocale, onLocaleChange, getLocale } from "./core/i18n.js";
 
@@ -87,6 +87,12 @@ pwInput.addEventListener("input", () => {
 formSignup.addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(formSignup);
+  const userError = validateUsername(fd.get("username"));
+  if (userError) {
+    toast.error(userError);
+    qs("#signup-username").focus();
+    return;
+  }
   const emError = validateEmail(fd.get("email"));
   if (emError) {
     toast.error(emError);

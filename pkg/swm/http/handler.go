@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"tacacs/pkg/public/cfg"
 	"tacacs/pkg/public/log"
@@ -12,6 +13,12 @@ import (
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
+
+// usernameAllowed 限制注册用户名只能由 ASCII 字母 / 数字 / 下划线 / 点 / 短横线
+// 组成。前端 login.html + format.js 也用同一规则做即时提示;这里是真正的强制点,
+// 拒绝中文 / 空格 / shell 特殊字符进入 tacacs 用户表(用户名最终会出现在 CLI
+// 提示符、审计日志、模板字段里,任何越界字符都可能制造解析或注入隐患)。
+var usernameAllowed = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 const (
 	sessionName = "user-session"
@@ -174,6 +181,13 @@ func handleCreateUser(c *gin.Context) {
 
 	if username == "" || password == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "用户名或密码不能为空"})
+		return
+	}
+	if !usernameAllowed.MatchString(username) {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"success": false,
+			"message": "用户名仅支持英文字母、数字、下划线、点和短横线,不允许中文或空格",
+		})
 		return
 	}
 	if email == "" {

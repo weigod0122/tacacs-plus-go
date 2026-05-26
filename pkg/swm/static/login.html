@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>网络设备权限系统 · 登录</title>
     <meta name="color-scheme" content="light">
+    <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
     <link rel="stylesheet" href="/static/css/tokens.css">
     <link rel="stylesheet" href="/static/css/base.css">
     <link rel="stylesheet" href="/static/css/components.css">
@@ -50,7 +51,8 @@
         <form id="signupForm" class="login-form" autocomplete="off">
             <div class="field">
                 <label class="field__label" for="signup-username" data-i18n="login.field.user">用户名</label>
-                <input class="input" id="signup-username" name="username" type="text" required maxlength="64">
+                <input class="input" id="signup-username" name="username" type="text" required maxlength="64" pattern="[A-Za-z0-9._\-]+">
+                <p class="field__hint" data-i18n="login.field.userHint">仅支持英文字母、数字、下划线、点和短横线,不允许中文或空格</p>
             </div>
             <div class="field">
                 <label class="field__label" for="signup-email" data-i18n="login.field.email">邮箱</label>
