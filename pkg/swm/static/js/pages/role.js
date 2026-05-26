@@ -53,6 +53,9 @@ export default async function renderRolePage(container) {
       class: "input", maxlength: 64, required: true,
       placeholder: t("role.create.namePh"),
     });
+    // 角色名禁止英文逗号:历史调用方对角色名做过 "," 拼接,这里在 UI 层提示用户;
+    // 真正强制点仍在后端 httpApiRoleCreate。
+    const nameHint = h("p", { class: "field__hint" }, t("fmt.name.noCommaHint"));
 
     // 用户一旦自己改过名字,就不再被两个 picker 的联动覆盖;只有 input 事件
     // 来自真实键入,程序设置 .value 不会触发,所以这个标志可信。
@@ -89,6 +92,7 @@ export default async function renderRolePage(container) {
       h("div", { class: "field" }, [
         h("label", { class: "field__label" }, t("role.create.name")),
         nameInput,
+        nameHint,
       ]),
       h("div", { class: "form-cols" }, [
         h("div", { class: "field" }, [
@@ -119,6 +123,7 @@ export default async function renderRolePage(container) {
 
       const name = nameInput.value.trim();
       if (!name) return showError(t("form.err.required", { label: t("role.create.name") }), nameInput);
+      if (name.includes(",")) return showError(t("fmt.name.noComma"), nameInput);
       const servers = serverPicker.values();
       if (servers.length === 0) {
         return showError(t("form.err.requiredMulti", { label: t("role.create.servers") }));

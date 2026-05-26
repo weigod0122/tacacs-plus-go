@@ -50,6 +50,15 @@ func httpApiTemplateCmdAdd(c *gin.Context) {
 		})
 		return
 	}
+	// 命令模板名禁止含英文逗号:角色创建时 command_template_list 用 "," 拼接,
+	// 含逗号的模板名会在 Split 之后变成不存在的子串,导致角色绑定失败或越权。
+	if strings.Contains(req.Template, ",") {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{
+			"code":    http.StatusMethodNotAllowed,
+			"message": fmt.Sprintf("Template(%v) must not contain comma ','", req.Template),
+		})
+		return
+	}
 
 	if db.IsTemplateCmdInUsed(req.Template) {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{

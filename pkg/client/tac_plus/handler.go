@@ -6,8 +6,11 @@ import (
 	"net"
 	"strings"
 	"tacacs/pkg/public/env"
+	"tacacs/pkg/public/log"
 	"tacacs/pkg/public/tacplus"
 	"time"
+
+	"github.com/bytedance/sonic"
 )
 
 // 定义处理器，实现tacplus包中的RequestHandler接口
@@ -43,7 +46,8 @@ func (h *myHandler) HandleAuthenStart(ctx context.Context, a *tacplus.AuthenStar
 		if env.DEBUG {
 			info.AuthenStatus = "getUserDone"
 			info.Details = "Authen pkt has User"
-			LogAuthen(info)
+			infoJSON, _ := sonic.MarshalString(info)
+			log.DebugLog("%s", infoJSON)
 		}
 	}
 	getUserNum := 0
@@ -52,7 +56,8 @@ func (h *myHandler) HandleAuthenStart(ctx context.Context, a *tacplus.AuthenStar
 		if env.DEBUG {
 			info.AuthenStatus = "getUserIng"
 			info.Details = "Get User"
-			LogAuthen(info)
+			infoJSON, _ := sonic.MarshalString(info)
+			log.DebugLog("%s", infoJSON)
 		}
 		c, err := s.GetUser(context.Background(), "User:")
 		if err != nil || c.Abort || getUserNum > 5 {
@@ -67,7 +72,8 @@ func (h *myHandler) HandleAuthenStart(ctx context.Context, a *tacplus.AuthenStar
 			if env.DEBUG {
 				info.AuthenStatus = "getUserDone"
 				info.Details = "Get User Done"
-				LogAuthen(info)
+				infoJSON, _ := sonic.MarshalString(info)
+				log.DebugLog("%s", infoJSON)
 			}
 		}
 
@@ -80,7 +86,8 @@ func (h *myHandler) HandleAuthenStart(ctx context.Context, a *tacplus.AuthenStar
 		if env.DEBUG {
 			info.AuthenStatus = "getPassIng"
 			info.Details = "Get User Password"
-			LogAuthen(info)
+			infoJSON, _ := sonic.MarshalString(info)
+			log.DebugLog("%s", infoJSON)
 		}
 		c, err := s.GetPass(context.Background(), "Password:")
 		if err != nil || c.Abort || getPassNum > 5 {
@@ -93,7 +100,8 @@ func (h *myHandler) HandleAuthenStart(ctx context.Context, a *tacplus.AuthenStar
 		if env.DEBUG && pass != "" {
 			info.AuthenStatus = "getPassDone"
 			info.Details = "Get User Password Done"
-			LogAuthen(info)
+			infoJSON, _ := sonic.MarshalString(info)
+			log.DebugLog("%s", infoJSON)
 		}
 	}
 

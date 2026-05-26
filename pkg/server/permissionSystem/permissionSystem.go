@@ -564,7 +564,7 @@ func (ps *PermissionSystem) runTask(task func(), cycle time.Duration) {
 			task()
 			if env.DEBUG {
 				pkgName, fnName := utils.GetFunctionName(task)
-				log.Logger.Infof("task(packageName:'%v', functionName:'%v') cost:%v", pkgName, fnName, time.Since(startTime))
+				log.DebugLog("task(packageName:'%v', functionName:'%v') cost:%v", pkgName, fnName, time.Since(startTime))
 			}
 		}
 		time.Sleep(cycle)

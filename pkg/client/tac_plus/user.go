@@ -145,7 +145,7 @@ func updateUsers() {
 	tempTacacsTableUpdateTime = tacacsTableUpdateTime
 
 	startTime := time.Now()
-	log.Logger.Info("tacacs info has updated, start handle database`s data")
+	log.DebugLog("1 tacacs info has updated, start handle database`s data")
 	newTacacsUserInfo := utils.NewTypedSyncMap[string, *UserInfo]()
 	for _, user := range tacacsUserInfos {
 		if user.Status != userStatusNormal {
@@ -197,12 +197,13 @@ func updateUsers() {
 			},
 		})
 	}
-	log.Logger.Infof("handle database`s data done, time consuming: %v", time.Since(startTime))
+	log.DebugLog("2 handle database`s data done, time consuming: %v", time.Since(startTime))
 
 	startTime2 := time.Now()
-	log.Logger.Info("start update tacacsUserInfo")
+	log.DebugLog("3 start update tacacsUserInfo")
 	updateTacacsUserInfoAndCache(newTacacsUserInfo)
-	log.Logger.Infof("update tacacsUserInfo done, time consuming: %v", time.Since(startTime2))
+	log.DebugLog("4 update tacacsUserInfo done, time consuming: %v", time.Since(startTime2))
+
 }
 
 func updateTacacsUserInfoAndCache(newTacacsUserInfo *utils.TypedSyncMap[string, *UserInfo]) {

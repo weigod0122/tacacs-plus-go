@@ -151,12 +151,17 @@ export function renderTemplatePage({
         size: "lg",
         fields: [
           { name: "template", label: t("tpl.add.name"), required: true, maxlength: 64,
-            placeholder: t("tpl.add.namePh") },
+            placeholder: t("tpl.add.namePh"), hint: t("fmt.name.noCommaHint") },
           { name: "templateDetail", label: t(detailLabelKey), required: true,
             placeholder: detailPlaceholder, hint: t(detailHintKey), type: "textarea",
             rows: detailRows },
         ],
         onSubmit: async (values) => {
+          // 模板名禁止英文逗号:角色创建时 server_template_list / command_template_list
+          // 都用 "," 拼接,模板名中混入逗号会破坏后端 Split 解析。
+          if (values.template && values.template.includes(",")) {
+            throw new Error(t("fmt.name.noComma"));
+          }
           const entries = values.templateDetail
             .split(separator)
             .map((s) => s.trim())

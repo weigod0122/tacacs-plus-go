@@ -45,6 +45,16 @@ func httpApiRoleCreate(c *gin.Context) {
 		})
 		return
 	}
+	// 角色名 / 服务器模板名 / 命令模板名 都不允许包含英文逗号:
+	// server_template_list、command_template_list 以及历史调用方对角色名的拼接
+	// 都使用 "," 作为分隔符,值中混入逗号会破坏后续 Split 解析,导致权限错位。
+	if strings.Contains(req.Template, ",") {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{
+			"code":    http.StatusMethodNotAllowed,
+			"message": fmt.Sprintf("Template(%v) must not contain comma ','", req.Template),
+		})
+		return
+	}
 	if temp := db.GetTacacsRoleTemplateByTemplate(req.Template); temp.Template != "" {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{
 			"code":    http.StatusMethodNotAllowed,

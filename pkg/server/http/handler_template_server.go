@@ -51,6 +51,16 @@ func httpApiTemplateServerAdd(c *gin.Context) {
 		})
 		return
 	}
+	// 服务器模板名禁止含英文逗号:角色创建时 server_template_list 用 "," 拼接,
+	// 模板名一旦含逗号会被错误地拆成多个模板,后续 GetTacacsServerTemplatesByTemplate
+	// 都查不到正确条目。
+	if strings.Contains(req.Template, ",") {
+		c.JSON(http.StatusMethodNotAllowed, gin.H{
+			"code":    http.StatusMethodNotAllowed,
+			"message": fmt.Sprintf("Template(%v) must not contain comma ','", req.Template),
+		})
+		return
+	}
 	if len(req.TemplateDetail) < 1 {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{
 			"code":    http.StatusMethodNotAllowed,

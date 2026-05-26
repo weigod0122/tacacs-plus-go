@@ -50,6 +50,7 @@ func ParameterInitialization(item string) error {
 		if debug, err := apolloConfig.GetConfig("debug"); err == nil {
 			DEBUG = debug == "true"
 		}
+		log.SetDebug(DEBUG)
 		apolloConfig.AddChangeListener(&debugListener{})
 	}
 	return nil
@@ -146,6 +147,7 @@ type debugListener struct{}
 func (d *debugListener) OnChange(event *storage.ChangeEvent) {
 	if v, ok := event.Changes["debug"]; ok {
 		DEBUG = v.NewValue == "true"
+		log.SetDebug(DEBUG)
 		log.Logger.Infof("debug mode changed to: %v", DEBUG)
 	}
 }
