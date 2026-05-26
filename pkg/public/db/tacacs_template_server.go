@@ -15,8 +15,12 @@ type TacacsServerTemplate struct {
 	ServerTemplate string `db:"server_template"`
 }
 
+// tacacsServerTemplateCols 必须与下面 Scan 顺序一一对应。
+// 不用 SELECT *,避免 DBA 加列后 Scan 数量不匹配直接报错。
+const tacacsServerTemplateCols = "id, template, server_template"
+
 func GetTacacsServerTemplatesByTemplate(template string) (tacacsServerTemplates []*TacacsServerTemplate, err error) {
-	rows, err := DbRead.Query("SELECT * FROM tacacs_server_template WHERE template = ?", template)
+	rows, err := DbRead.Query("SELECT "+tacacsServerTemplateCols+" FROM tacacs_server_template WHERE template = ?", template)
 	if err != nil {
 		log.Logger.Errorf("select TacacsServerTemplate from tacacs_server_template database is failed, because %v", err)
 		return tacacsServerTemplates, err
@@ -37,7 +41,7 @@ func GetTacacsServerTemplatesByTemplate(template string) (tacacsServerTemplates 
 }
 
 func GetTacacsServerTemplates() (tacacsServerTemplates []*TacacsServerTemplate, err error) {
-	selectSql := "SELECT * FROM tacacs_server_template"
+	selectSql := "SELECT " + tacacsServerTemplateCols + " FROM tacacs_server_template"
 	rows, err := DbRead.Query(selectSql)
 	if err != nil {
 		log.Logger.Errorf("select TacacsServerTemplate from tacacs_server_template database is failed, because %v", err)
@@ -60,11 +64,16 @@ func GetTacacsServerTemplates() (tacacsServerTemplates []*TacacsServerTemplate, 
 
 func AddTacacsServerTemplates(template string, serverTemplate []string) error {
 	insertSql := "INSERT INTO tacacs_server_template (template, server_template) VALUES (?, ?)"
+	inserted := 0
 	for _, srv := range utils.UniqueStringSlice(serverTemplate) {
 		if _, err := DbWrite.Exec(insertSql, template, srv); err != nil {
 			log.Logger.Errorf("DB Exec err: %v", err)
 			return err
 		}
+		inserted++
+	}
+	if inserted > 0 {
+		BumpMetaVersion(MetaKeyServer)
 	}
 	return nil
 }
@@ -98,6 +107,7 @@ func DelTacacsServerTemplate(item interface{}) error {
 	default:
 		return fmt.Errorf("unsupported type for deletion: %T", item)
 	}
+	BumpMetaVersion(MetaKeyServer)
 	return nil
 }
 

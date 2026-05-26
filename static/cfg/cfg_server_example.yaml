@@ -17,7 +17,8 @@ swm_auth:
   #allowed_cidrs:
   #  - "10.0.0.5/32"     # SwM 所在主机
   #  - "10.0.1.0/24"     # 同网段所有 SwM 实例
-  allowed_cidrs: []
+  allowed_cidrs:
+    - "10.0.0.0/8"
 
 #飞书通知（审批流提醒、权限变更通知）
 feishu:
@@ -48,3 +49,9 @@ database:
       password: "password"
       address: "ip:port"#实际数据库ip:port
       table: "table"#实际表名
+
+#是否启用 DB 端触发器（tacacs_meta 自动 bump version）。
+#  true  : 假设 DB 已建好 trigger，server 写入后由 trigger bump，应用层不再重复写。
+#  false : DB 不支持 / 不允许 trigger（云 RDS 等），server 在每次 INSERT/UPDATE/DELETE
+#          后手动 bump tacacs_meta；绕过 server 直接改 DB 的写入只能等 client 5min 兜底。
+database_triggers: true

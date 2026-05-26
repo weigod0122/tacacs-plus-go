@@ -106,5 +106,9 @@ func CoverTacacsOnDutyUser(onDutyUsers []string) ([]string, []string, error) {
 		}
 	}
 
+	if len(needAdd) > 0 || len(needDelete) > 0 {
+		BumpMetaVersion(MetaKeyOnDuty)
+	}
+
 	return needAdd, needDelete, nil
 }

@@ -100,6 +100,7 @@ func CreateTacacsApproval(tacacsApproval TacacsApproval) (int64, error) {
 		log.Logger.Errorf("get last insert id of tacacs_approval failed, because %v", err)
 		return 0, err
 	}
+	BumpMetaVersion(MetaKeyApproval)
 	return id, nil
 }
 
@@ -110,6 +111,7 @@ func UpdateTacacsApprovalStatus(id int64, status int) error {
 		log.Logger.Errorf("update tacacs_approval status in database is failed, because %v", err)
 		return err
 	}
+	BumpMetaVersion(MetaKeyApproval)
 	return nil
 }
 
@@ -128,6 +130,9 @@ func ApproveWithLock(id int64, newStatus int, approver string) (int64, error) {
 	rows, err := res.RowsAffected()
 	if err != nil {
 		return 0, err
+	}
+	if rows > 0 {
+		BumpMetaVersion(MetaKeyApproval)
 	}
 	return rows, nil
 }

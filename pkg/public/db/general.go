@@ -31,7 +31,7 @@ func GetTablesUpdateTime() (string, error) {
 		return "", err
 	}
 
-	order := []string{"user", "role", "server", "command", "on_duty", "approval"}
+	order := MetaKeys
 	parts := make([]string, 0, len(order))
 	for _, k := range order {
 		parts = append(parts, strconv.FormatUint(versions[k], 10))

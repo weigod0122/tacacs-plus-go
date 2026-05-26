@@ -38,6 +38,7 @@ const dict = {
     "nav.server":   "跳板机模板",
     "nav.command":  "命令模板",
     "nav.log":      "操作日志",
+    "nav.system":   "系统设置",
 
     // ---- Common UI ----
     "common.confirm":   "确认",
@@ -295,6 +296,17 @@ const dict = {
     "log.value.aria":  "删除该条件",
     "log.empty":       "无匹配的日志",
 
+    // ---- System / settings page (admin-only) ----
+    "system.title":    "系统设置",
+    "system.subtitle": "管理员级运维操作",
+    "system.meta.title": "强制刷新缓存",
+    "system.meta.desc":  "把 tacacs_meta 中所有元数据版本号 +1，触发所有 client 在下一次 2 秒轮询时全量重建本地缓存。适用于 DBA 绕过 server 直接改库后需要立即生效的场景；正常写操作走 server 接口时不需要点这里。",
+    "system.meta.btn":   "立即刷新",
+    "system.meta.confirmTitle": "确认刷新元数据",
+    "system.meta.confirmMsg":   "将立即把 tacacs_meta 全部 6 个 key 的版本号 +1，所有 client 会在 2 秒内重建本地缓存。是否继续？",
+    "system.meta.toast.ok":   "已强制刷新 tacacs_meta，所有 client 将在 2 秒内重建缓存",
+    "system.meta.toast.fail": "刷新失败：",
+
     // ---- User actions modals ----
     "ua.password.title": "修改密码 · {user}",
     "ua.password.old":   "旧密码",
@@ -408,6 +420,7 @@ const dict = {
     "nav.server":   "Server Templates",
     "nav.command":  "Command Templates",
     "nav.log":      "Audit Logs",
+    "nav.system":   "System",
 
     "common.confirm":   "Confirm",
     "common.cancel":    "Cancel",
@@ -654,6 +667,16 @@ const dict = {
     "log.value.ph":    "Pick or type",
     "log.value.aria":  "Remove this filter",
     "log.empty":       "No matching logs",
+
+    "system.title":    "System",
+    "system.subtitle": "Administrator-only maintenance actions",
+    "system.meta.title": "Force cache refresh",
+    "system.meta.desc":  "Bump every tacacs_meta version key, forcing every client to rebuild its local cache on the next 2-second poll. Use this when a DBA edits the database directly (bypassing the server) and you need the change to take effect immediately; normal writes via the server's own endpoints do not need this.",
+    "system.meta.btn":   "Refresh now",
+    "system.meta.confirmTitle": "Confirm metadata refresh",
+    "system.meta.confirmMsg":   "All 6 keys in tacacs_meta will have their version bumped by 1, and every client will rebuild its local cache within 2 seconds. Continue?",
+    "system.meta.toast.ok":   "tacacs_meta bumped; all clients will rebuild their caches within 2 seconds",
+    "system.meta.toast.fail": "Refresh failed: ",
 
     "ua.password.title": "Change password · {user}",
     "ua.password.old":   "Current password",

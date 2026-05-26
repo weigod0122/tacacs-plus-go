@@ -24,8 +24,13 @@ type TacacsUser struct {
 	Notes              string `db:"notes"`
 }
 
+// tacacsUserCols 是显式列清单,顺序必须与 Scan 调用一一对应。
+// 不用 SELECT * 的原因:DBA 加列(如自增 id / 业务字段)时,SELECT * 会让
+// rows.Scan 因目标数量不匹配直接报错,而显式列名不受新列影响。
+const tacacsUserCols = "user, phone_number, email, create_time, role, role_update_time, password, password_update_time, status, status_update_time, notes"
+
 func GetTacacsUserInfos() (tacacsUsers []*TacacsUser, err error) {
-	selectSql := "SELECT * FROM tacacs_user"
+	selectSql := "SELECT " + tacacsUserCols + " FROM tacacs_user"
 	rows, err := DbRead.Query(selectSql)
 	if err != nil {
 		log.Logger.Errorf("select TacacsUser from tacacs_user database is failed, because %v", err)
@@ -47,7 +52,7 @@ func GetTacacsUserInfos() (tacacsUsers []*TacacsUser, err error) {
 }
 
 func GetTacacsUserInfoByUserName(userName string) (tacacsUsers *TacacsUser, err error) {
-	selectSql := "SELECT * FROM tacacs_user where user = ?"
+	selectSql := "SELECT " + tacacsUserCols + " FROM tacacs_user where user = ?"
 	rows, err := DbRead.Query(selectSql, userName)
 	if err != nil {
 		log.Logger.Errorf("select TacacsUser from tacacs_user database is failed, because %v", err)
@@ -85,7 +90,9 @@ func UpdateRoleByName(user, role string) {
 	_, err := DbWrite.Exec(updateSql, role, now, user)
 	if err != nil {
 		log.Logger.Errorf("更新用户（%v）权限失败: %v", user, err)
+		return
 	}
+	BumpMetaVersion(MetaKeyUser)
 }
 
 func CreateUser(user, PhoneNumber, email, password, notes string) error {
@@ -95,8 +102,10 @@ func CreateUser(user, PhoneNumber, email, password, notes string) error {
 	_, err := DbWrite.Exec(insertSql, user, PhoneNumber, email, now, "null", now, passwordHash, now, "1", now, notes)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
+		return err
 	}
-	return err
+	BumpMetaVersion(MetaKeyUser)
+	return nil
 }
 
 func UpdateUserPassword(user, password string) error {
@@ -106,8 +115,10 @@ func UpdateUserPassword(user, password string) error {
 	_, err := DbWrite.Exec(updateSql, passwordHash, now, user)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
+		return err
 	}
-	return err
+	BumpMetaVersion(MetaKeyUser)
+	return nil
 }
 
 func UpdateUserNotes(user, notes string) error {
@@ -116,8 +127,10 @@ func UpdateUserNotes(user, notes string) error {
 	_, err := DbWrite.Exec(updateSql, notes, now, user)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
+		return err
 	}
-	return err
+	BumpMetaVersion(MetaKeyUser)
+	return nil
 }
 
 func UpdateUserStatus(user, status string) error {
@@ -126,8 +139,10 @@ func UpdateUserStatus(user, status string) error {
 	_, err := DbWrite.Exec(updateSql, status, now, user)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
+		return err
 	}
-	return err
+	BumpMetaVersion(MetaKeyUser)
+	return nil
 }
 
 // BatchUpdateUserRole 单事务批量回写多个用户的 role + role_update_time。
@@ -162,8 +177,10 @@ func BatchUpdateUserRole(roleMap map[string]string) error {
 	_, err := DbWrite.Exec(sb.String(), args...)
 	if err != nil {
 		log.Logger.Errorf("BatchUpdateUserRole failed: %v (size=%d)", err, len(roleMap))
+		return err
 	}
-	return err
+	BumpMetaVersion(MetaKeyUser)
+	return nil
 }
 
 // BatchUpdateUserStatus 把一批用户改到同一个 status，同时刷新 status_update_time。
@@ -190,8 +207,10 @@ func BatchUpdateUserStatus(users []string, status string) error {
 	_, err := DbWrite.Exec(updateSql, args...)
 	if err != nil {
 		log.Logger.Errorf("BatchUpdateUserStatus failed: %v (size=%d, status=%s)", err, len(users), status)
+		return err
 	}
-	return err
+	BumpMetaVersion(MetaKeyUser)
+	return nil
 }
 
 func UpdateUserEmailAndPhoneNumber(user, email, phoneNumber string) error {
@@ -199,8 +218,10 @@ func UpdateUserEmailAndPhoneNumber(user, email, phoneNumber string) error {
 	_, err := DbWrite.Exec(updateSql, email, phoneNumber, user)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
+		return err
 	}
-	return err
+	BumpMetaVersion(MetaKeyUser)
+	return nil
 }
 
 func GetTacacsUserData2Md5() (string, error) {

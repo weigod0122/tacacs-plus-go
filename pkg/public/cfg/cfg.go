@@ -111,12 +111,13 @@ func (f *FeishuConfig) ResolveAppSecret() string {
 }
 
 type ServerGlobalConfig struct {
-	LogFilePath string                             `yaml:"log_file_path"`
-	Database    map[string]map[string]DatabaseInfo `yaml:"database"`
-	Http        string                             `yaml:"http"`
-	Manager     string                             `yaml:"manager"`
-	SwmAuth     SwmAuthConfig                      `yaml:"swm_auth"`
-	Feishu      FeishuConfig                       `yaml:"feishu"`
+	LogFilePath      string                             `yaml:"log_file_path"`
+	Database         map[string]map[string]DatabaseInfo `yaml:"database"`
+	DatabaseTriggers bool                               `yaml:"database_triggers"`
+	Http             string                             `yaml:"http"`
+	Manager          string                             `yaml:"manager"`
+	SwmAuth          SwmAuthConfig                      `yaml:"swm_auth"`
+	Feishu           FeishuConfig                       `yaml:"feishu"`
 }
 
 type ClientGlobalConfig struct {

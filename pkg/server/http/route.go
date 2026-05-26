@@ -55,4 +55,7 @@ func configRoutes(app *gin.Engine) {
 	approval.POST("/create", httpApiApprovalCreate) //创建审批工单
 	approval.POST("/update", httpApiApprovalUpdate) //审批选定工单
 
+	//缓存元数据接口（仅管理员）：强制让 client 全量重建本地缓存
+	app.POST("/tacacs/meta/refresh", httpApiMetaRefresh)
+
 }

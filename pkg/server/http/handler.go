@@ -28,6 +28,23 @@ func httpApiHealth(c *gin.Context) {
 	return
 }
 
+// httpApiMetaRefresh 给管理员手动触发缓存失效用：把 tacacs_meta 6 个 key 全部 +1，
+// 无视触发器开关与是否真有数据变更，强制让 client 在下一次 2s 轮询时全量重建。
+// 适用场景：DBA 绕过 server 直接改了 DB，需要立刻让缓存生效（否则要等 5min 兜底）。
+func httpApiMetaRefresh(c *gin.Context) {
+	if err := db.RefreshAllMeta(); err != nil {
+		c.JSON(http.StatusFailedDependency, gin.H{
+			"code":    http.StatusFailedDependency,
+			"message": fmt.Sprintf("refresh tacacs_meta failed: %v", err),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"code":    http.StatusOK,
+		"message": "tacacs_meta version bumped for all keys",
+	})
+}
+
 func setResponseHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := "*"

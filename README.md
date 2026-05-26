@@ -312,6 +312,92 @@ mysql -u $USER -p $DB < static/sql/tacacs_meta.sql
 >
 > 脚本**幂等**,可重复执行;执行账号需要 `CREATE` + `TRIGGER` 权限。
 
+> 🪄 **不允许触发器的环境怎么办?**(部分云 RDS / 受管 MySQL 禁止用户创建 trigger)
+> `tacacs_meta.sql` 里只保留 `CREATE TABLE` 那段,触发器全部跳过,然后在 `server` 配置里把 `database_triggers: false` 打开 —— server 会在每次 `INSERT/UPDATE/DELETE` 之后**手动 bump** `tacacs_meta`,效果与触发器等价。
+> 这个开关只影响"是谁负责 bump":`true` 假设 DB 已建好 trigger,应用层不再重复写;`false` 由 server 应用层兜底。**绕过 server 直接改 DB 的写入**(DBA 手动 SQL、批量导入等)在 `false` 模式下不会被自动 bump,需要走下文的「系统设置 · 立即刷新」或等 client 5 min 兜底。
+
+<details>
+<summary>📋 触发器禁用场景完整指引(点击展开)</summary>
+
+**典型受影响环境**
+
+- **阿里云 RDS MySQL / 腾讯云 CDB / 华为云 RDS / AWS RDS for MySQL** —— 默认不授予 `SUPER` / `TRIGGER` 权限给应用账号,需工单 / 自定义参数组 / 设置 `log_bin_trust_function_creators=ON` 才能放开;不少团队为了少申报合规变更,直接走应用层 bump 路线
+- 公司 DBA 治理策略明令禁止业务表挂触发器(避免和 binlog 复制 / DTS 同步打架)
+- 多主 / GTID 严格模式,担心触发器对副本一致性带来不可见行为
+
+**Step 1 —— 只导入建表 + 播种,跳过所有触发器**
+
+`tacacs_meta.sql` 前 23 行是 `CREATE TABLE` + 6 行 meta 播种(对应 user / role / server / command / on_duty / approval);第 24 行起的 `DELIMITER $$` 之后全是触发器。一刀切:
+
+```bash
+# 只导入表结构和播种,跳过 trigger 段
+head -n 23 static/sql/tacacs_meta.sql | mysql -u $USER -p $DB
+```
+
+执行账号此时只需要 `CREATE` / `INSERT` 权限,**不需要 `TRIGGER`**。验证:
+
+```sql
+SHOW TRIGGERS LIKE 'trg_tacacs_%';   -- 应返回空集
+SELECT k, version FROM tacacs_meta;  -- 应有 6 行,version 全部为 0
+```
+
+> 其余 7 个 SQL 文件(`tacacs_user.sql` / `tacacs_role_template.sql` / `tacacs_server_template.sql` / `tacacs_command_template.sql` / `tacacs_on_duty.sql` / `tacacs_on_duty_white_list.sql` / `tacacs_approval.sql` / `tacacs_admin.sql`)**不含触发器**,照常 source 即可,无需任何改动。
+
+**Step 2 —— 打开应用层 bump 开关**
+
+`cfg_server.yaml`(或 Apollo `server` Key)改为:
+
+```yaml
+database_triggers: false
+```
+
+> ⚠️ 这个开关**只在 server 端生效**,加到 `cfg_swm.yaml` / `cfg_client.yaml` 完全没用。改完必须**重启 server** 才能生效(配置在启动时读取,运行中不热更)。
+
+**Step 3 —— 验证应用层 bump 真的在跑**
+
+启动 server 后,通过 SwM 随便改一条用户 / 角色 / 命令模板,然后:
+
+```sql
+SELECT k, version FROM tacacs_meta WHERE k = '<对应的 key>';
+```
+
+`version` 应当 `+1`。常见错配:
+
+| 现象                          | 排查方向                                                         |
+| ----------------------------- | ---------------------------------------------------------------- |
+| version 没动                  | server 没读到 `database_triggers: false`,确认配置文件 / Apollo Key 都改对了,server 已重启 |
+| version 一次跳 2              | DB 里**还残留着 trigger** 在并行 bump,执行 `SHOW TRIGGERS LIKE 'trg_tacacs_%';` 排查并 `DROP` 掉残留 |
+| version 完全为 0,client 没反应 | 进 server 日志找 `bump meta` 关键字看是否有报错(权限 / 表不存在等) |
+
+**已知陷阱:开关和实际 DB 状态错位**
+
+`database_triggers` 描述的是"DB 现在到底有没有 trigger",**配错就是静默故障**:
+
+
+| 实际有 trigger? | `database_triggers` | 结果                                                                                                  |
+| --------------- | ------------------- | ----------------------------------------------------------------------------------------------------- |
+| 有              | `true`              | ✅ 正常(默认推荐路径)                                                                               |
+| 无              | `false`             | ✅ 正常(本节场景)                                                                                   |
+| 有              | `false`             | ⚠️ Trigger + 应用层各 bump 一次,version 每次 `+2`,跳号但功能正常                                     |
+| **无**          | **`true`**          | ❌ **静默故障** —— 没人 bump,`tacacs_meta.version` 永远停在 0,client 退化为 5 min 兜底全量重建,权限变更延迟到**分钟级**而非 2 秒 |
+
+部署后强烈建议立即用 `SHOW TRIGGERS LIKE 'trg_tacacs_%';` 对实际 DB 状态做一次校对,跟配置文件对得上再放流量。
+
+**绕过 server 直接写库的几种情况**
+
+应用层 bump 只覆盖**通过 server REST API 的写入**。下列路径**不会**自动 bump,需要额外动作:
+
+
+| 写入路径                              | 处理方式                                                                                          |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| DBA 手工 `INSERT/UPDATE/DELETE`       | 同事务里追加 `UPDATE tacacs_meta SET version = version + 1 WHERE k = '<对应 key>';`               |
+| 批量数据迁移 / 灰度同步脚本           | 收尾时去 SwM「系统设置 · 立即刷新」一键把 6 个 key 全部 `+1`(等价于 `POST /tacacs/meta/refresh`) |
+| 实在忘了 bump                         | 等 client 5 min 全量兜底,缓存最终会一致,代价是权限变更延迟最长 5 min                            |
+
+> 这个限制在**触发器模式下也存在**(DBA 直写 DB 不会触发 server 的 trigger,但**会**触发 DB 层 trigger)—— 触发器模式下 DBA 直写**会**自动 bump,因为 trigger 在 DB 层兜底了所有写入路径。这是为什么默认推荐 `database_triggers: true` 的核心原因:**它是兜底范围最广的方案**。
+
+</details>
+
 ### ③ 配置文件
 
 平台支持两种配置加载方式:**Apollo 配置中心**(推荐生产)和**本地 YAML 文件**(Apollo 不可用时的回退)。
@@ -397,6 +483,13 @@ database:
       password: "password"
       address: "127.0.0.1:3306"
       table: "tacacs"
+
+# 是否启用 DB 端触发器(tacacs_meta 自动 bump version)。
+#   true  : 假设 DB 已建好 trigger,server 写入后由 trigger bump,应用层不再重复写。
+#   false : DB 不支持 / 不允许 trigger(云 RDS 等),server 在每次 INSERT/UPDATE/DELETE
+#           后手动 bump tacacs_meta;绕过 server 直接改 DB 的写入只能等 client 5 min
+#           兜底,或由管理员到前端「系统设置」点「立即刷新」。
+database_triggers: true
 ```
 
 </details>
@@ -558,6 +651,59 @@ make release
 
 > 其他平台（Windows、FreeBSD 等）未做支持和测试,建议使用 Linux 或 macOS。
 
+**打包 Docker 镜像**
+
+把 `build/<PLATFORM>/` 下已经编译好的二进制塞进 Alpine 基础镜像。**脚本本身不跑 `make build`** —— 镜像里到底是哪次编译的代码,由调用者显式 `make build` 决定,避免「这镜像究竟编自哪一版代码」的不确定。
+
+> 镜像基础层固定 `linux/amd64`。Mac 上打镜像前必须先交叉编译: `GOOS=linux GOARCH=amd64 make build`,否则 `build/linux_amd64/` 是空的。
+
+```bash
+# 只构建本地镜像(默认 IMAGE_PREFIX=tacacs,无 registry)
+make docker-image SERVICE=server          # 单服务
+make docker-image SERVICE=all             # 三个一起打,tag 共享同一时间戳
+
+# 推送已构建的镜像到 registry(必须显式带 registry 前缀)
+IMAGE_PREFIX=harbor.x.com/tacacs IMAGE_TAG=20260526-103015 \
+    make docker-push SERVICE=server
+
+# 一步到位:构建 + 推送
+IMAGE_PREFIX=harbor.x.com/tacacs make docker-release SERVICE=all
+
+# 单服务快捷别名(等价于 make docker-image SERVICE=<svc>)
+make docker-server
+make docker-client
+make docker-swm
+```
+
+也可以绕过 Make 直接调底层脚本,Make target 只是薄封装:
+
+```bash
+./scripts/docker-build.sh build server                              # 单构建
+./scripts/docker-build.sh build all                                 # 全构建
+IMAGE_PREFIX=harbor.x.com/tacacs ./scripts/docker-build.sh push server          # 单推送
+IMAGE_PREFIX=harbor.x.com/tacacs ./scripts/docker-build.sh build --push all     # 构建 + 推送
+```
+
+**镜像命名与 Tag 策略**
+
+镜像全名格式:`<IMAGE_PREFIX>/<service>:<tag>`,例: `harbor.x.com/tacacs/server:20260526-103015`。
+
+- `IMAGE_PREFIX` 用 `/` 拼 registry 与 project(不是 `-`),对齐 Harbor 等私有 registry 的「project/repo」约定 —— 三个服务自然落到同一个 project 下。
+- 默认 `tag` = **构建时刻的 UTC 时间戳**(`YYYYMMDD-HHMMSS`),与 git 状态完全无关 —— 即使 working tree 有未提交修改也照常打镜像。
+- 同一次脚本调用内(含 `SERVICE=all`)共享同一个时间戳,三个服务镜像 tag 一致,便于成组发布与回滚。
+- 每次 build/push 都**同时**打 `:<timestamp>` 和 `:latest` 两个 tag,`docker pull <image>` 不带 tag 默认拉到最新。
+- 显式传 `IMAGE_TAG=v1.2.0` 会跳过时间戳直接用,适合 release 场景。
+
+
+| 环境变量       | 默认值          | 说明                                                                                                |
+| -------------- | --------------- | --------------------------------------------------------------------------------------------------- |
+| `IMAGE_PREFIX` | `tacacs`        | 镜像前缀。**推送时必须包含 `/`**(即带 registry),否则脚本主动拒绝,防止误推到 Docker Hub             |
+| `IMAGE_TAG`    | UTC 构建时间戳  | 显式指定时跳过时间戳;`push` 单独使用时必须显式传(脚本结束后时间戳就丢了,默认值算出来跟 build 对不上) |
+| `PLATFORM`     | `linux_amd64`   | 从 `build/<PLATFORM>/<service>` 取二进制                                                            |
+| `SERVICE`      | `all`           | `make docker-*` 的操作目标,可选 `server` / `client` / `swm` / `all`                                 |
+
+> 推送前先 `docker login <registry>`,否则 push 会返回 401。
+
 ### ⑤ 启动服务
 
 > 启动顺序:**Server → Client → SwM**。SwM 依赖 Server 提供后端 API。
@@ -594,11 +740,65 @@ APP_ENV=prod CFG_FILE=/etc/tacacs/server.yaml ./scripts/deploy.sh start server
 
 **方式二:手动启动**
 
+直接调二进制,自己控制 CWD 和环境变量。**配置源 Apollo 优先**:启动时先尝试拉 Apollo 的 `server` / `client` / `swm` Key,Apollo 不可达或 Key 不存在时退到 `-c` 指定的本地 yaml 兜底(Apollo 失败会打 `apollo init failed (will use local config)` 日志,这是预期行为)。
+
+下面三种启动姿势可以单独用,也可以叠加(env 优先级 > `apollo.yaml`;Apollo 优先级 > 本地 cfg)。
+
+**① Apollo + 环境变量(容器 / K8s / CI 推荐)**
+
+镜像里**不放** `apollo.yaml`,通过 env 注入三个必填字段,binary 启动时从环境读出来连 Apollo:
+
 ```bash
-./build/<os>_<arch>/server -c cfg_server.yaml
-./build/<os>_<arch>/client -c cfg_client.yaml
-./build/<os>_<arch>/swm    -c cfg_swm.yaml
+export APOLLO_APP_ID="your-app-id"
+export APOLLO_IP="http://your-apollo-server:8080"
+export APOLLO_SECRET="your-secret"
+# 可选: APOLLO_CLUSTER (默认 default) / APOLLO_NAMESPACE (默认 application)
+export APP_ENV=prod    # 不设则默认 test
+
+./build/<os>_<arch>/server     # 不带 -c,业务配置完全靠 Apollo
+./build/<os>_<arch>/client
+./build/<os>_<arch>/swm
 ```
+
+Docker 容器走的就是这条路径,见 [`docker/Dockerfile`](docker/Dockerfile) 顶部的 `docker run` 示例。镜像里只有二进制,运行时全靠 env 注入 Apollo 凭据。
+
+**② Apollo + 本地 `apollo.yaml`(固定物理机部署 / 开发机推荐)**
+
+把 Apollo 连接信息写进文件,binary 启动时从 **CWD** 下读 `apollo.yaml`:
+
+```bash
+cp static/cfg/apollo_example.yaml apollo.yaml
+# 编辑 apollo.yaml,填写 app_id / ip / secret
+
+# 注意 CWD: apollo.yaml 是相对 binary 运行目录读取,不是 binary 所在目录
+cd /path/where/apollo.yaml/lives
+./build/<os>_<arch>/server     # 同样不带 -c
+./build/<os>_<arch>/client
+./build/<os>_<arch>/swm
+```
+
+> ⚠️ `apollo.yaml` **已在 `.gitignore`**,含 Apollo Secret,永远不要 commit。env 变量若同时设置会**逐字段覆盖**文件中的对应值,所以可以在 `apollo.yaml` 写测试集群,临时 `APOLLO_IP=http://prod-apollo ... ./server` 一次性切到生产,不用改文件。
+
+**③ 纯本地 cfg(无 Apollo / 离线 / 临时自测)**
+
+完全不依赖 Apollo,业务配置全部走 `-c` 指定的本地 yaml:
+
+```bash
+cp static/cfg/cfg_server_example.yaml cmd/server/cfg.yaml
+cp static/cfg/cfg_client_example.yaml cmd/client/cfg.yaml
+cp static/cfg/cfg_swm_example.yaml    cmd/swm/cfg.yaml
+# 按文件内注释填写 DB 连接 / 监听端口 / 共享密钥 / 飞书凭据等
+
+./build/<os>_<arch>/server -c cmd/server/cfg.yaml
+./build/<os>_<arch>/client -c cmd/client/cfg.yaml
+./build/<os>_<arch>/swm    -c cmd/swm/cfg.yaml
+```
+
+启动日志会出现 `apollo init failed (will use local config)`,**预期行为**,不影响起服。`-c` 路径自由,绝对路径(`-c /etc/tacacs/server.yaml`)和相对路径都支持,文件不存在才会报错退出。
+
+> 🪜 **混合用法**: ① / ② 也可以同时带 `-c <local.yaml>`,纯粹作为 "Apollo 不可达时最后的兜底"——Apollo 正常时不会读本地文件,Apollo 拉不到时自动降级,防止网络抖动直接弄崩起服。生产环境推荐这么配。
+>
+> ⚠️ 本地 cfg 模式下,`on_duty` 值班名单只能改 SQL + 重启进程,`debug` 模式由启动参数固定 —— 这两个 Key 是 Apollo 专属的运行时热更新通道,本地文件没有等价能力。
 
 启动成功后访问:
 
@@ -855,9 +1055,10 @@ flowchart LR
 
 - 🚀 **三层本地缓存** — 用户信息、密码验证结果、命令授权结果分别缓存,读操作零锁,刷新时整体原子切换。
 - 🛡️ **并发请求合并** — 同一用户/命令的并发缓存未命中自动合并为单次计算,避免击穿（尤其是 bcrypt 密码验证场景）。
-- 🔁 **版本号驱动同步** — 数据库触发器自动维护版本号,Client 每 2 秒轮询,版本变化时全量重建缓存,**最慢 2 秒生效新权限**。
+- 🔁 **版本号驱动同步** — `tacacs_meta` 表的版本号在每次写入后被 bump,Client 每 2 秒轮询,版本变化时全量重建缓存,**最慢 2 秒生效新权限**。bump 由谁负责取决于 `server.database_triggers`:`true` 走 DB 触发器(默认,18 个 trigger 覆盖所有增删改),`false` 走 server 应用层(适配禁用 trigger 的云 RDS)。
 - 🔍 **角色 Key 预计算** — 用户角色组合 key 在缓存装载时一次性算好,授权请求时直接查找,无需每次重新计算。
-- ⏱️ **小时级兜底** — 即便触发器异常,每小时强制全量重建一次,确保缓存最终一致。
+- ⏱️ **分钟级兜底** — 即便触发器异常或被禁用,每 5 分钟强制全量重建一次,确保缓存最终一致。
+- 🔧 **管理员一键强刷** — SwM 前端「系统设置 · 立即刷新」按钮(仅管理员可见)会调 `POST /tacacs/meta/refresh`,把 6 个 meta key 的版本号无条件 +1,所有 client 在下一次 2 秒轮询时全量重建。适用于 DBA 绕过 server 直接改库、需要立刻让缓存生效的场景(否则要等 5 min 兜底)。
 
 ---
 

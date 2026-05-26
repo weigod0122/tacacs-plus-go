@@ -7,12 +7,14 @@
 -- 执行账号需要：CREATE, INSERT, UPDATE, TRIGGER 权限。
 
 CREATE TABLE IF NOT EXISTS `tacacs_meta` (
+    `id`         BIGINT NOT NULL AUTO_INCREMENT COMMENT '主键自增ID',
     `k`          VARCHAR(32) NOT NULL,
     `version`    BIGINT UNSIGNED NOT NULL DEFAULT 0,
     `updated_at` TIMESTAMP(6) NOT NULL
                  DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
-    PRIMARY KEY (`k`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='tacacs 缓存失效版本号';
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_k` (`k`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='tacacs 缓存失效版本号';
 
 -- 幂等播种 6 行（与 Go 侧 order 严格对应：user/role/server/command/on_duty/approval）
 INSERT INTO `tacacs_meta` (`k`) VALUES

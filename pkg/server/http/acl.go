@@ -18,6 +18,7 @@ var adminOnlyPrefixes = []string{
 
 var adminOnlyExact = map[string]struct{}{
 	"/tacacs/user/reset/password": {},
+	"/tacacs/meta/refresh":        {},
 }
 
 var ownershipBodyUserPaths = map[string]struct{}{

@@ -16,6 +16,7 @@ import renderRolePage from "./pages/role.js";
 import renderServerPage from "./pages/server.js";
 import renderCommandPage from "./pages/command.js";
 import renderLogPage from "./pages/log.js";
+import renderSystemPage from "./pages/system.js";
 
 const ctx = {
   username: document.body.dataset.username || "",
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
       { id: "server",   labelKey: "nav.server",   icon: "▤", render: renderServerPage },
       { id: "command",  labelKey: "nav.command",  icon: "›_", render: renderCommandPage },
       { id: "log",      labelKey: "nav.log",      icon: "≡", render: renderLogPage, adminOnly: true },
+      { id: "system",   labelKey: "nav.system",   icon: "⚙", render: renderSystemPage, adminOnly: true },
     ],
   },
 ];

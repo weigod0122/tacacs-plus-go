@@ -103,7 +103,7 @@ func (tps *TacPlusSystem) Start() error {
 		return fmt.Errorf("updateUsers定时任务添加失败：%v", tpsCronAddFuncErr)
 	}
 
-	_, tpsCronAddFuncErr = tps.cron.AddFunc("30 45 * * * *", clearTempTacacsTableUpdateTime)
+	_, tpsCronAddFuncErr = tps.cron.AddFunc("0 */5 * * * *", clearTempTacacsTableUpdateTime)
 	if tpsCronAddFuncErr != nil {
 		return fmt.Errorf("clearTempTacacsTableUpdateTime定时任务添加失败：%v", tpsCronAddFuncErr)
 	}

@@ -15,8 +15,12 @@ type TacacsCommandTemplate struct {
 	CommandTemplate string `db:"command_template"`
 }
 
+// tacacsCommandTemplateCols 必须与下面 Scan 顺序一一对应。
+// 不用 SELECT *,避免 DBA 加列后 Scan 数量不匹配直接报错。
+const tacacsCommandTemplateCols = "id, template, command_template"
+
 func GetTacacsCommandTemplatesByTemplate(template string) (tacacsCommandTemplates []*TacacsCommandTemplate, err error) {
-	rows, err := DbRead.Query("SELECT * FROM tacacs_command_template WHERE template = ?", template)
+	rows, err := DbRead.Query("SELECT "+tacacsCommandTemplateCols+" FROM tacacs_command_template WHERE template = ?", template)
 	if err != nil {
 		log.Logger.Errorf("select TacacsCommandTemplate from tacacs_command_template database is failed, because %v", err)
 		return nil, err
@@ -37,7 +41,7 @@ func GetTacacsCommandTemplatesByTemplate(template string) (tacacsCommandTemplate
 }
 
 func GetTacacsCommandTemplates() (tacacsCommandTemplates []*TacacsCommandTemplate, err error) {
-	selectSql := "SELECT * FROM tacacs_command_template"
+	selectSql := "SELECT " + tacacsCommandTemplateCols + " FROM tacacs_command_template"
 	rows, err := DbRead.Query(selectSql)
 	if err != nil {
 		log.Logger.Errorf("select TacacsCommandTemplate from tacacs_command_template database is failed, because %v", err)
@@ -60,11 +64,16 @@ func GetTacacsCommandTemplates() (tacacsCommandTemplates []*TacacsCommandTemplat
 
 func AddTacacsCommandTemplate(template string, commandTemplate []string) error {
 	insertSql := "INSERT INTO tacacs_command_template (template, command_template) VALUES (?, ?)"
+	inserted := 0
 	for _, cmd := range utils.UniqueStringSlice(commandTemplate) {
 		if _, err := DbWrite.Exec(insertSql, template, cmd); err != nil {
 			log.Logger.Errorf("DB Exec err: %v", err)
 			return err
 		}
+		inserted++
+	}
+	if inserted > 0 {
+		BumpMetaVersion(MetaKeyCommand)
 	}
 	return nil
 }
@@ -98,6 +107,7 @@ func DelTacacsCommandTemplate(item interface{}) error {
 	default:
 		return fmt.Errorf("unsupported type for deletion: %T", item)
 	}
+	BumpMetaVersion(MetaKeyCommand)
 	return nil
 }
 

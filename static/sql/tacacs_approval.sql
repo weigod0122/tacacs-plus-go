@@ -9,12 +9,7 @@ CREATE TABLE `tacacs_approval` (
     `approver` varchar(30) DEFAULT NULL COMMENT '审批人（status=2/4 时记录）',
     `approve_time` datetime DEFAULT NULL COMMENT '审批时间',
     PRIMARY KEY (`id`),
-    KEY `tacacs_approval_login_approval_permissions_index` (`approval_permissions`),
-    KEY `tacacs_approval_login_status_index` (`status`),
-    KEY `tacacs_approval_login_user_index` (`user`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3
-
--- 升级老库：
--- ALTER TABLE tacacs_approval ADD COLUMN approver VARCHAR(30) DEFAULT NULL COMMENT '审批人';
--- ALTER TABLE tacacs_approval ADD COLUMN approve_time DATETIME DEFAULT NULL COMMENT '审批时间';
-
+    KEY `idx_approval_permissions_index` (`approval_permissions`),
+    KEY `idx_status_index` (`status`),
+    KEY `idx_user_index` (`user`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='tacacs 权限审批工单';

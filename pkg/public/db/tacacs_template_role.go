@@ -13,8 +13,12 @@ type TacacsRoleTemplate struct {
 	CommandTemplateList string `db:"command_template_list"`
 }
 
+// tacacsRoleTemplateCols 必须与下面所有 Scan 顺序一一对应。
+// 不用 SELECT *,避免 DBA 加列后 Scan 数量不匹配直接报错。
+const tacacsRoleTemplateCols = "id, template, server_template_list, command_template_list"
+
 func GetTacacsRoleTemplate() []TacacsRoleTemplate {
-	rows, err := DbRead.Query("SELECT * FROM tacacs_role_template")
+	rows, err := DbRead.Query("SELECT " + tacacsRoleTemplateCols + " FROM tacacs_role_template")
 	if err != nil {
 		log.Logger.Errorf("select tacacs_role_template from database is failed, because %v", err)
 		return nil
@@ -34,7 +38,7 @@ func GetTacacsRoleTemplate() []TacacsRoleTemplate {
 	return templates
 }
 func GetTacacsRoleTemplates() ([]*TacacsRoleTemplate, error) {
-	rows, err := DbRead.Query("SELECT * FROM tacacs_role_template")
+	rows, err := DbRead.Query("SELECT " + tacacsRoleTemplateCols + " FROM tacacs_role_template")
 	if err != nil {
 		log.Logger.Errorf("select tacacs_role_template from database is failed, because %v", err)
 		return nil, err
@@ -56,7 +60,7 @@ func GetTacacsRoleTemplates() ([]*TacacsRoleTemplate, error) {
 
 func GetTacacsRoleTemplateByTemplate(template string) TacacsRoleTemplate {
 	var t TacacsRoleTemplate
-	rows, err := DbRead.Query("SELECT * FROM tacacs_role_template WHERE template = ?", template)
+	rows, err := DbRead.Query("SELECT "+tacacsRoleTemplateCols+" FROM tacacs_role_template WHERE template = ?", template)
 	if err != nil {
 		log.Logger.Errorf("select tacacs_role_template from database is failed, because %v", err)
 		return t
@@ -75,7 +79,7 @@ func GetTacacsRoleTemplateByTemplate(template string) TacacsRoleTemplate {
 
 func GetTacacsRoleTemplateByServerTemplate(serverTemplate string) []TacacsRoleTemplate {
 	var t []TacacsRoleTemplate
-	rows, err := DbRead.Query("SELECT * FROM tacacs_role_template WHERE server_template_list = ?", serverTemplate)
+	rows, err := DbRead.Query("SELECT "+tacacsRoleTemplateCols+" FROM tacacs_role_template WHERE server_template_list = ?", serverTemplate)
 	if err != nil {
 		log.Logger.Errorf("select tacacs_role_template from database is failed, because %v", err)
 		return nil
@@ -95,7 +99,7 @@ func GetTacacsRoleTemplateByServerTemplate(serverTemplate string) []TacacsRoleTe
 
 func GetTacacsRoleTemplateByCommandTemplate(commandTemplate string) []TacacsRoleTemplate {
 	var t []TacacsRoleTemplate
-	rows, err := DbRead.Query("SELECT * FROM tacacs_role_template WHERE command_template_list = ?", commandTemplate)
+	rows, err := DbRead.Query("SELECT "+tacacsRoleTemplateCols+" FROM tacacs_role_template WHERE command_template_list = ?", commandTemplate)
 	if err != nil {
 		log.Logger.Errorf("select tacacs_role_template from database is failed, because %v", err)
 		return nil
@@ -125,8 +129,10 @@ func CreateRole(template, serverTemplateList, commandTemplateList string) error 
 	_, err := DbWrite.Exec(insertSql, template, serverTemplateList, commandTemplateList)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
+		return err
 	}
-	return err
+	BumpMetaVersion(MetaKeyRole)
+	return nil
 }
 
 func DeleteRole(template string) error {
@@ -134,8 +140,10 @@ func DeleteRole(template string) error {
 	_, err := DbWrite.Exec(deleteSql, template)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
+		return err
 	}
-	return err
+	BumpMetaVersion(MetaKeyRole)
+	return nil
 }
 
 func GetInUsedRole() (roles []string) {

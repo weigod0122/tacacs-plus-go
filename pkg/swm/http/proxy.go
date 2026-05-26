@@ -32,6 +32,7 @@ var adminOnlyPrefixes = []string{
 // 不在此列表；后端 tacacs_manager 自身做最终权限校验。
 var adminOnlyExact = map[string]struct{}{
 	"/tacacs/user/reset/password": {},
+	"/tacacs/meta/refresh":        {},
 }
 
 // ownershipBodyUserPaths 是 body 里有 "user" 字段、非管理员调用时该字段必须 ==
