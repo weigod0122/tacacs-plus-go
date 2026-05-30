@@ -19,6 +19,7 @@ span
 ## 📑 目录
 
 - [✨ 核心特性](#-核心特性)
+- [🌐 网络与运维原生能力](#-网络与运维原生能力)
 - [🏗️ 系统架构](#️-系统架构)
 - [🔄 协议流程](#-协议流程)
 - [⚠️ 部署前安全须知](#️-部署前安全须知)
@@ -34,9 +35,9 @@ span
 - [📦 目录结构](#-目录结构)
 - [⚖️ 负载均衡](#️-负载均衡)
 - [⚡ 性能与缓存设计](#-性能与缓存设计)
-- [🌐 网络与运维原生能力](#-网络与运维原生能力)
 - [📝 日志收集与归档](#-日志收集与归档)
 - [🔌 端口与协议](#-端口与协议)
+- [🛠️ 命令速查](#️-命令速查)
 - [📜 License](#-license)
 
 ---
@@ -54,12 +55,87 @@ span
 | 📡**DSCP 全链路打标**     | TACACS+ 报文在监听器/拨号器 socket 选项层就设置 IP_TOS / IPV6_TCLASS,**三次握手包起**就携带 DSCP,无损网络场景下认证/授权报文走 EF/AF 队列免丢 |
 | 🚀**TCP 链路调优**        | 边缘 Client`SetNoDelay` 关 Nagle、`SetKeepAlive` + 30s 探活,降低首包延迟、防 NAT 老化导致的"幽灵连接"                                         |
 | 🔁**Single-Connect 复用** | 完整支持 RFC 8907 Single Connection Mode,一条 TCP 复用 N 个 AAA 会话,节省网络设备侧握手成本                                                   |
+| 🪪**PROXY protocol**(可选)| 跨四层 LB(HAProxy/DPVS/Nginx Stream/K8s NodePort)透传真实交换机 IP,可信源 CIDR 白名单防 IP 伪造,留空即不启用                              |
 | 🚧**多层防滥用闸门**      | Server 1MB body 上限、Client`/health` 全局 2 QPS 令牌桶、登录 5 次/15 分钟自动锁定、IP CIDR 白名单四道闸,默认开箱即安全                       |
 | 🌐**浏览器侧硬化**        | CSP/HSTS/X-Frame-Options/Permissions-Policy 等 7 项安全响应头,CSRF 双提交 + 恒时比较防时序攻击                                                |
 | 🚨**进程崩溃飞书加急**    | `defer recover` 捕获 panic 后向 `manager` 发送红色加急卡片,值班人员秒级感知                                                                   |
 | 📊**飞书集成**(可选)      | 卡片消息 + 应用内/短信/电话加急,审批/告警/通知一站式;不接入也能在 SwM 前端走完整审批流                                                        |
 | 🧰**运维友好**            | 命令模板 / 角色模板 / 服务器模板 / 值班白名单全部 Web 化管理                                                                                  |
 | 🔧**水平扩展**            | Client 边缘节点无状态,四层/七层 LB 即可扩容                                                                                                   |
+
+---
+
+## 🌐 网络与运维原生能力
+
+除"业务逻辑"以外,平台在网络栈和运维体感上做了一批专门优化,大多是"装好就生效、不需要额外配置"的原生能力。
+
+### 📡 DSCP 全链路打标(无损网络必备)
+
+TACACS+ 通常和生产网管面共用链路,一旦设备/链路抖动出现拥塞,认证报文被丢就意味着运维和业务全部失联。DSCP 打标可以让 AAA 报文在交换机的 QoS 队列里享有 EF/AF 优先级,显著降低拥塞时的丢包率。
+
+**这里和其他实现的关键差异**:
+
+
+|                  | 仅`setsockopt(IP_TOS)` 在已建立的连接上 | 本项目                                                             |
+| ---------------- | --------------------------------------- | ------------------------------------------------------------------ |
+| SYN/ACK 三次握手 | **不带 DSCP**(socket 还没建好)          | **带 DSCP**(在 `ListenConfig.Control` / `Dialer.Control` 里就预置) |
+| RST/FIN 拆链     | 取决于 socket 是否回收                  | 一致带 DSCP                                                        |
+| IPv6 双栈        | 多数实现仅打 IPv4                       | IPv4 走`IP_TOS`、IPv6 走 `IPV6_TCLASS`,自动判别                    |
+
+配置只需在 `cfg_client.yaml` 填一个 0~63 的值即可,留空或 `"0"` 表示不打标:
+
+```yaml
+tacPlus:
+  ip: "0.0.0.0"
+  port: "49"
+  shareKey: "your-tacacs-shared-key"
+  dscp: "46"     # EF (Expedited Forwarding),适合关键控制面流量
+```
+
+### 🚀 TCP 链路调优
+
+边缘 Client 接受到的每一条 TACACS+ TCP 连接,都会立即设置:
+
+- `SetNoDelay(true)` — 关闭 Nagle 算法,小包(认证请求平均几十字节)立刻发送,不再凑 MSS。**首包延迟降低一个 RTT**。
+- `SetKeepAlive(true) + SetKeepAlivePeriod(30s)` — 网络设备到 Client 的长连接经过 NAT/防火墙时,30 秒一次的 keepalive 探活能避免会话表老化导致的"半开/幽灵连接"。
+
+### 🔁 Single-Connect 多路复用
+
+完整支持 RFC 8907 §4.5.1 Single Connection Mode。开启后一台网络设备的多次 AAA 会话(同一用户多条命令、不同用户的认证 + 授权 + 计费)可以**复用同一条 TCP**,显著减少 TCP 握手开销。日志里 `isSingleConnect: true` 字段直接体现。
+
+### 🪪 PROXY protocol —— 跨 LB 透传真实交换机 IP(可选)
+
+四层 LB(HAProxy / DPVS FullNAT / Nginx Stream / K8s NodePort)做 SNAT 之后,Client 内核拿到的 `RemoteAddr()` 是 **LB 出口 IP**,不是交换机真实 IP;审计/限速/排障会全部把流量算在少数几个 LB 节点头上。开启 PROXY protocol 后,LB 在 TCP 握手之后、TACACS+ 首字节之前先发一段头(v1 文本 / v2 二进制),Client 端识别这段头并把 `RemoteAddr()` 替换回原始客户端 IP,业务代码无感知。
+
+**安全底线**:PROXY 头未签名,任何能 TCP 连上 49 端口的对端都可以伪造。因此**必须**配 `proxyTrustedCidrs` 白名单,只接受来自 LB 自身 IP 段的 PROXY 头,其它源即使发了也丢弃。完整字段说明、行为矩阵、各 LB 的 `send-proxy` 配法见下文「⚖️ 负载均衡 → 🪪 PROXY protocol」章节。
+
+留空 `proxyTrustedCidrs` = 不启用 PROXY 解析,`RemoteAddr()` 始终取 TCP 对端;交换机不走 LB 直连本机也照常工作(USE/IGNORE 双策略并存)。
+
+### 🚧 多层防滥用闸门
+
+每一层都是"装好就生效",无需额外配置:
+
+
+| 层                   | 限制                                                                   | 触发后行为                        |
+| -------------------- | ---------------------------------------------------------------------- | --------------------------------- |
+| **Server HTTP**      | `body ≤ 1MB`(MaxBytesReader)                                          | 413 + 「拆成多次/用模板」可读提示 |
+| **Client HTTP**      | `/health` 全局 2 QPS 令牌桶                                            | 429 + 限速原因                    |
+| **SwM `/login`**     | 单 IP 5 次/分钟,失败 5 次锁 15 分钟                                    | 429 + 锁定提示 + 审计日志         |
+| **Server IP 白名单** | 默认仅放行`127.0.0.1/32`+`::1/128`,跨机部署填 `swm_auth.allowed_cidrs` | 403 + 审计日志,签名校验之前先拒   |
+
+### 🌐 浏览器侧硬化
+
+SwM 默认下发 7 项标准安全响应头:`Content-Security-Policy`(同源 default-src 'self')、`Strict-Transport-Security`(HSTS 1 年)、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: same-origin`、`Permissions-Policy`(关闭地理/相机/麦克风/支付)、`Cross-Origin-Opener-Policy: same-origin`。CSRF 采用 session 绑定的 token + `subtle.ConstantTimeCompare`,防时序攻击。
+
+### 🚨 进程崩溃飞书加急
+
+Server / Client / SwM 三个进程的 `main()` 都用 `defer recover()` 兜底,捕获到 panic 后:
+
+1. 把堆栈写进 `*_app.log`
+2. 向 `cfg.manager`(飞书用户 ID)发送**红色加急卡片**(应用内 + 短信 + 电话三连)
+3. 进程退出后由 `deploy.sh` 或 systemd/k8s 拉起
+
+留空 `manager` 字段即关闭告警,日志依然落盘。
 
 ---
 
@@ -516,6 +592,7 @@ tacPlus:
   port: "49"
   shareKey: "your-tacacs-shared-key"
   dscp: "0"
+  proxyTrustedCidrs: []          # 可选: 上游 LB 启用 send-proxy 时,填可信源 CIDR 列表(YAML 切片);留空 = 不启用 PROXY 解析
 ```
 
 </details>
@@ -638,7 +715,7 @@ GOOS=darwin GOARCH=amd64 make build
 一次性构建所有支持的 OS/ARCH 组合:
 
 ```bash
-make release
+make build-all-platforms
 ```
 
 支持的平台:
@@ -959,7 +1036,7 @@ COMMIT;
 ├── static/
 │   ├── cfg/      # 配置文件模板
 │   └── sql/      # 数据库 schema + 触发器
-└── Makefile      # 构建入口(make build / make release / make clean)
+└── Makefile      # 构建入口(make build / make build-all-platforms / make clean)
 ```
 
 **模块依赖关系**:
@@ -1025,6 +1102,50 @@ flowchart LR
 
 Client 之间**完全无状态**,只读 DB + 本地缓存,可任意横向扩展。
 
+### 🪪 PROXY protocol —— 跨 LB 透传真实交换机 IP(可选)
+
+**为什么需要它**：交换机经过四层 LB(HAProxy/DPVS FullNAT/Nginx Stream/K8s NodePort 等)再打到 Client 时,内核看到的 `RemoteAddr()` 是 **LB 的出口 IP**,不是交换机真实 IP。结果就是审计日志、限速、排障全都把流量算在了少数几个 LB 节点头上,无法回溯到具体交换机。
+
+**解决方式**:启用 PROXY protocol(HAProxy 在 2010 年提出的小协议,v1 文本 / v2 二进制),由 LB 在 TCP 三次握手之后、TACACS+ 首字节之前,先发一小段 ASCII/二进制头,里面带原始 `client_ip:client_port → lb_ip:lb_port`。Client 端识别这段头,把 `RemoteAddr()` 替换成真实客户端 IP,业务代码无感知。
+
+**安全底线**:PROXY 头是**纯文本未签名**的,任何能 TCP 连上 49 端口的对端都可以伪造一段 "我来自 8.8.8.8" 然后接真实 AAA 报文。所以**必须**配 `proxyTrustedCidrs` 白名单,只接受来自 LB 自身 IP 段的 PROXY 头;其它源即使发了也忽略不解析。这一安全语义不可绕过 —— 留空 = 完全不启用整个功能。
+
+**配置**:在 `cfg_client.yaml` 的 `tacPlus` 块下加 `proxyTrustedCidrs`(YAML 切片):
+
+```yaml
+tacPlus:
+  ip: "0.0.0.0"
+  port: "49"
+  shareKey: "your-tacacs-shared-key"
+  dscp: "0"
+  proxyTrustedCidrs:                 # 留空 / 整段缺省 = 不启用 PROXY 解析,RemoteAddr() 取 TCP 对端
+    - "10.10.0.0/16"                 # LB 出口段(VIP 回源用的 LIP / SNAT 段)
+    - "192.168.100.0/24"             # 同上,可以多段
+```
+
+**行为矩阵**:
+
+| `proxyTrustedCidrs` | 连接源 IP            | PROXY 头           | `RemoteAddr()` 拿到的            |
+| ------------------- | -------------------- | ------------------ | -------------------------------- |
+| 留空 / 不配         | 任意                 | 不解析             | TCP 对端 IP                      |
+| 配了 CIDR           | **命中白名单**       | 必须有,解析       | PROXY 头里的**原始客户端 IP**   |
+| 配了 CIDR           | **不在白名单**       | 即使发了也丢弃     | TCP 对端 IP(允许交换机直连)    |
+
+> 选 USE/IGNORE 而不是 REQUIRE/REJECT,是为了**让 LB 转发与交换机直连并存**:同一个 49 端口,LB 链路走 PROXY,边缘部分交换机直连仍然能工作。源端访问控制(谁能连到 49)由网络侧防火墙负责,应用层只承担"防 PROXY 头伪造 IP"这一道闸。
+
+**LB 侧需要打开 send-proxy**:
+
+| LB              | 配置项                                                             |
+| --------------- | ------------------------------------------------------------------ |
+| HAProxy         | `server cli1 10.0.0.1:49 send-proxy-v2`                            |
+| Nginx Stream    | `proxy_protocol on;`(`stream { server { ... } }` 块里)             |
+| DPVS            | `dpip lb add ... -t proxy_protocol_v2`(或 keepalived 配置项)       |
+| K8s Ingress-NGINX | Service annotation `service.beta.kubernetes.io/aws-load-balancer-proxy-protocol: "*"`,Controller `--enable-real-ip` |
+
+> ⚠️ 灰度建议:先在测试 Client 上把 LB IP 段配上、观察 `tac_plus_authen_*.log` 里 `switchAddr` 是否换成了真实交换机 IP,再推全量。漏配 `send-proxy` 时连接会卡在 PROXY 头 peek(5s 超时后断开),日志里能直接看到。
+
+**性能**:每条新 TCP 连接多一次 ~10ns 的 CIDR 命中扫(典型可信段 1–10 条);叠加 Single-Connect 复用同一条 TCP 跑无数次 AAA,实际开销淹没在 Accept 自身的握手 + 缓冲分配里,无感知。
+
 ---
 
 ## ⚡ 性能与缓存设计
@@ -1059,72 +1180,6 @@ flowchart LR
 - 🔍 **角色 Key 预计算** — 用户角色组合 key 在缓存装载时一次性算好,授权请求时直接查找,无需每次重新计算。
 - ⏱️ **分钟级兜底** — 即便触发器异常或被禁用,每 5 分钟强制全量重建一次,确保缓存最终一致。
 - 🔧 **管理员一键强刷** — SwM 前端「系统设置 · 立即刷新」按钮(仅管理员可见)会调 `POST /tacacs/meta/refresh`,把 6 个 meta key 的版本号无条件 +1,所有 client 在下一次 2 秒轮询时全量重建。适用于 DBA 绕过 server 直接改库、需要立刻让缓存生效的场景(否则要等 5 min 兜底)。
-
----
-
-## 🌐 网络与运维原生能力
-
-除"业务逻辑"以外,平台在网络栈和运维体感上做了一批专门优化,大多是"装好就生效、不需要额外配置"的原生能力。
-
-### 📡 DSCP 全链路打标(无损网络必备)
-
-TACACS+ 通常和生产网管面共用链路,一旦设备/链路抖动出现拥塞,认证报文被丢就意味着运维和业务全部失联。DSCP 打标可以让 AAA 报文在交换机的 QoS 队列里享有 EF/AF 优先级,显著降低拥塞时的丢包率。
-
-**这里和其他实现的关键差异**:
-
-
-|                  | 仅`setsockopt(IP_TOS)` 在已建立的连接上 | 本项目                                                             |
-| ---------------- | --------------------------------------- | ------------------------------------------------------------------ |
-| SYN/ACK 三次握手 | **不带 DSCP**(socket 还没建好)          | **带 DSCP**(在 `ListenConfig.Control` / `Dialer.Control` 里就预置) |
-| RST/FIN 拆链     | 取决于 socket 是否回收                  | 一致带 DSCP                                                        |
-| IPv6 双栈        | 多数实现仅打 IPv4                       | IPv4 走`IP_TOS`、IPv6 走 `IPV6_TCLASS`,自动判别                    |
-
-配置只需在 `cfg_client.yaml` 填一个 0~63 的值即可,留空或 `"0"` 表示不打标:
-
-```yaml
-tacPlus:
-  ip: "0.0.0.0"
-  port: "49"
-  shareKey: "your-tacacs-shared-key"
-  dscp: "46"     # EF (Expedited Forwarding),适合关键控制面流量
-```
-
-### 🚀 TCP 链路调优
-
-边缘 Client 接受到的每一条 TACACS+ TCP 连接,都会立即设置:
-
-- `SetNoDelay(true)` — 关闭 Nagle 算法,小包(认证请求平均几十字节)立刻发送,不再凑 MSS。**首包延迟降低一个 RTT**。
-- `SetKeepAlive(true) + SetKeepAlivePeriod(30s)` — 网络设备到 Client 的长连接经过 NAT/防火墙时,30 秒一次的 keepalive 探活能避免会话表老化导致的"半开/幽灵连接"。
-
-### 🔁 Single-Connect 多路复用
-
-完整支持 RFC 8907 §4.5.1 Single Connection Mode。开启后一台网络设备的多次 AAA 会话(同一用户多条命令、不同用户的认证 + 授权 + 计费)可以**复用同一条 TCP**,显著减少 TCP 握手开销。日志里 `isSingleConnect: true` 字段直接体现。
-
-### 🚧 多层防滥用闸门
-
-每一层都是"装好就生效",无需额外配置:
-
-
-| 层                   | 限制                                                                   | 触发后行为                        |
-| -------------------- | ---------------------------------------------------------------------- | --------------------------------- |
-| **Server HTTP**      | `body ≤ 1MB`(MaxBytesReader)                                          | 413 + 「拆成多次/用模板」可读提示 |
-| **Client HTTP**      | `/health` 全局 2 QPS 令牌桶                                            | 429 + 限速原因                    |
-| **SwM `/login`**     | 单 IP 5 次/分钟,失败 5 次锁 15 分钟                                    | 429 + 锁定提示 + 审计日志         |
-| **Server IP 白名单** | 默认仅放行`127.0.0.1/32`+`::1/128`,跨机部署填 `swm_auth.allowed_cidrs` | 403 + 审计日志,签名校验之前先拒   |
-
-### 🌐 浏览器侧硬化
-
-SwM 默认下发 7 项标准安全响应头:`Content-Security-Policy`(同源 default-src 'self')、`Strict-Transport-Security`(HSTS 1 年)、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: same-origin`、`Permissions-Policy`(关闭地理/相机/麦克风/支付)、`Cross-Origin-Opener-Policy: same-origin`。CSRF 采用 session 绑定的 token + `subtle.ConstantTimeCompare`,防时序攻击。
-
-### 🚨 进程崩溃飞书加急
-
-Server / Client / SwM 三个进程的 `main()` 都用 `defer recover()` 兜底,捕获到 panic 后:
-
-1. 把堆栈写进 `*_app.log`
-2. 向 `cfg.manager`(飞书用户 ID)发送**红色加急卡片**(应用内 + 短信 + 电话三连)
-3. 进程退出后由 `deploy.sh` 或 systemd/k8s 拉起
-
-留空 `manager` 字段即关闭告警,日志依然落盘。
 
 ---
 
@@ -1255,6 +1310,177 @@ EOF
 | **8383** | HTTP          | Client | 运维探活/健康检查 (仅`/health`,全局限速 2 QPS,建议内网)        |
 | **8897** | HTTP / HTTPS  | SwM    | 浏览器 → SwM(`cert_file` + `key_file` 都填→HTTPS;都留空→HTTP,仅限 `localhost` / 127.0.0.1 直连开发) |
 | **8899** | HTTP          | Server | 仅 SwM → Server (建议绑 127.0.0.1)                            |
+
+---
+
+## 🛠️ 命令速查
+
+本章节汇总 `Makefile` 所有 target 与 `scripts/` 下脚本的可执行命令、参数、环境变量,作为日常运维 / 构建 / 发布的查表式参考。详细背景与设计动机见 [④ 构建](#-构建)、[⑤ 启动服务](#-启动服务)、[⚖️ 负载均衡](#️-负载均衡) 等相关章节。
+
+### 🏗️ Makefile 目标
+
+#### 编译
+
+| 命令 | 作用 | 关键变量 |
+|------|------|----------|
+| `make` / `make build` | 当前平台编译三个 binary,产物在 `build/<os>_<arch>/` | `GOOS` / `GOARCH` 默认 `go env`;`GO` 覆盖 go 命令路径 |
+| `make build-server` | 仅编译 server | 同上 |
+| `make build-client` | 仅编译 client | 同上 |
+| `make build-swm` | 仅编译 swm | 同上 |
+| `make build-all-platforms` | 全平台交叉编译(linux/amd64+arm64, darwin/amd64+arm64) | 无 |
+| `make check-platform` | 校验 `go` 是否在 PATH + 当前平台是否在支持列表内,失败给出修法提示 | 无 |
+| `make clean` | 删除整个 `build/` 目录 | 无 |
+
+```bash
+# 默认 = 当前平台
+make build
+
+# 交叉编译到 Linux ARM64
+GOOS=linux GOARCH=arm64 make build
+
+# go 不在 PATH 时指定路径(单次)
+GO=/usr/local/go/bin/go make build
+# 或者
+make GO=/usr/local/go/bin/go build
+```
+
+#### Docker 镜像
+
+> Docker 相关 target **不会触发 `make build`**,镜像里到底是哪次编译的代码由调用者显式 build 决定;Mac 上打镜像前要先 `GOOS=linux GOARCH=amd64 make build`,否则 `build/linux_amd64/` 是空的。
+
+| 命令 | 作用 | 必填变量 | 可选变量 |
+|------|------|----------|----------|
+| `make docker-image SERVICE=<svc\|all>` | 打本地镜像,同时打 `:<UTC 时间戳>` 与 `:latest` 两个 tag | 无(prefix 默认 `tacacs`) | `IMAGE_PREFIX`、`IMAGE_TAG`、`PLATFORM` |
+| `make docker-push SERVICE=<svc\|all>` | 推已存在镜像 | `IMAGE_PREFIX`(必须含 `/`)、`IMAGE_TAG` | `PLATFORM` |
+| `make docker-release SERVICE=<svc\|all>` | 一步到位 build + push | `IMAGE_PREFIX`(必须含 `/`) | `IMAGE_TAG`、`PLATFORM` |
+| `make docker-promote SERVICE=<svc\|all>` | 把已发布的某个 tag 重新打 alias 推回(**不重新编译**),`:<TARGET_TAG>` 与 `:<SOURCE_TAG>` 指向同一个 digest | `IMAGE_PREFIX`(必须含 `/`)、`SOURCE_TAG` | `TARGET_TAG`(默认 `stable`) |
+| `make docker-server` / `docker-client` / `docker-swm` | 单服务快捷别名,等价于 `make docker-image SERVICE=<svc>` | 无 | 同 `docker-image` |
+
+```bash
+# 本地构建(默认 prefix=tacacs,不推 registry)
+make docker-image SERVICE=all
+
+# 推到 Harbor(同时推 :<timestamp> 和 :latest)
+IMAGE_PREFIX=harbor.x.com/tacacs make docker-release SERVICE=all
+
+# 显式版本号(release 场景)
+IMAGE_TAG=v1.2.0 IMAGE_PREFIX=harbor.x.com/tacacs make docker-release SERVICE=all
+
+# 灰度跑 :latest 通过后,promote 到 :stable 给生产 pin
+IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=20260526-103015 \
+    make docker-promote SERVICE=all
+
+# 自定义 alias(默认 stable)
+IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=v1.2.0 TARGET_TAG=production \
+    make docker-promote SERVICE=server
+```
+
+**Docker 相关环境变量汇总**
+
+| 变量 | 默认值 | 适用 target | 说明 |
+|------|--------|------------|------|
+| `SERVICE` | `all` | 所有 `docker-*` | 操作目标:`server` / `client` / `swm` / `all` |
+| `IMAGE_PREFIX` | `tacacs` | 所有 `docker-*` | 镜像前缀,推送/promote 时**必须含 `/`**(即带 registry),否则脚本主动拒绝防误推 Docker Hub |
+| `IMAGE_TAG` | UTC 时间戳 `YYYYMMDD-HHMMSS` | `docker-image` / `docker-push` / `docker-release` | 显式传跳过时间戳;`docker-push` 单独用必须显式传(时间戳跨调用就丢) |
+| `SOURCE_TAG` | 无默认 | `docker-promote` | 要 promote 的源 tag,缺失时脚本报错退出 |
+| `TARGET_TAG` | `stable` | `docker-promote` | 目标 alias 名;与 `SOURCE_TAG` 相同时拒绝(无意义) |
+| `PLATFORM` | `linux_amd64` | 所有 `docker-*` | 从 `build/<PLATFORM>/<service>` 取二进制 |
+
+### 🚀 scripts/deploy.sh —— 部署 / 进程管理
+
+四个子命令统一签名:`./scripts/deploy.sh <command> <service>`,服务名为 `server` / `client` / `swm` 之一。
+
+| 命令 | 作用 |
+|------|------|
+| `start` | 后台启动指定服务,启动后观察 12 秒 ——「起来就死」(配置错 / DB ping 失败 / panic)会捕获并回显最近 50 行日志,而不是静默成功 |
+| `stop` | 发 SIGTERM 优雅停止 |
+| `restart` | 等价于 `stop` 后 `start` |
+| `status` | 查看 PID / 启动时间 / 监听端口 |
+
+**环境变量**
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `APP_ENV` | `test` | 运行环境:`test` / `prod`,影响配置加载与日志路径 |
+| `CFG_FILE` | `cfg.yaml`(相对 `$PWD`) | 显式指定配置文件路径,适合 systemd / 容器内固定路径场景 |
+| `LOG_DIR` | `build/` | 日志输出目录 |
+| `PLATFORM` | 自动探测(`go env` 优先,go 没装时回落 `uname`) | 从 `build/<PLATFORM>/<service>` 取 binary,交叉编译产物需显式覆盖 |
+
+```bash
+# 测试环境启动(默认 APP_ENV=test)
+./scripts/deploy.sh start server
+./scripts/deploy.sh start client
+./scripts/deploy.sh start swm
+
+# 生产环境 + 自定义配置路径
+APP_ENV=prod CFG_FILE=/etc/tacacs/server.yaml \
+    ./scripts/deploy.sh start server
+
+# 查看状态 / 停止 / 重启
+./scripts/deploy.sh status server
+./scripts/deploy.sh stop server
+./scripts/deploy.sh restart server
+```
+
+### 🐳 scripts/docker-build.sh —— 镜像构建底层脚本
+
+`Makefile` 的 `docker-*` target 都是这个脚本的薄封装,绕过 Make 直调时签名如下:
+
+| 命令 | 作用 | 必填环境变量 |
+|------|------|--------------|
+| `build <service\|all>` | 从 `build/<PLATFORM>/<service>` 打 Alpine 镜像,同时打 `:<UTC 时间戳>` + `:latest` | 无(本地构建) |
+| `build --push <service\|all>` | 构建 + 推送,一次完成 | `IMAGE_PREFIX`(含 `/`) |
+| `push <service\|all>` | 推送已存在的本地镜像到 registry | `IMAGE_PREFIX`(含 `/`)、`IMAGE_TAG`(脚本不再缓存时戳,跨调用必须显式传) |
+| `promote <service\|all>` | 把 `<prefix>/<svc>:<SOURCE_TAG>` 重新打成 `<prefix>/<svc>:<TARGET_TAG>` 推回 registry;本地缺源镜像会先 `docker pull` | `IMAGE_PREFIX`(含 `/`)、`SOURCE_TAG` |
+| `help` / `-h` / `--help` | 打印完整 usage | 无 |
+
+**Guard rails(脚本主动拒绝,避免误操作)**
+
+| 触发条件 | 报错 |
+|----------|------|
+| `push` / `promote` 时 `IMAGE_PREFIX` 不含 `/` | 拒绝执行,防止默认推到 Docker Hub |
+| `promote` 时未设置 `SOURCE_TAG` | 报错退出,提示示例值 |
+| `promote` 时 `SOURCE_TAG == TARGET_TAG` | 拒绝执行(同 tag 自指无意义) |
+| `build` 时 `build/<PLATFORM>/<svc>` 不存在或不可执行 | 拒绝执行,提示先跑 `make build-<svc>` |
+| `push` 时本地不存在该 tag 的镜像 | 拒绝执行,提示先 build 或检查 `IMAGE_PREFIX` / `IMAGE_TAG` |
+
+```bash
+# 直接调脚本(等价于 Make target)
+./scripts/docker-build.sh build server
+./scripts/docker-build.sh build all
+IMAGE_PREFIX=harbor.x.com/tacacs ./scripts/docker-build.sh build --push all
+IMAGE_PREFIX=harbor.x.com/tacacs IMAGE_TAG=20260526-103015 \
+    ./scripts/docker-build.sh push server
+IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=20260526-103015 \
+    ./scripts/docker-build.sh promote all
+
+# 兼容老用法:第一个参数直接是 service|all,等价于 build
+./scripts/docker-build.sh server
+./scripts/docker-build.sh all
+```
+
+> 推送 / promote 前先 `docker login <registry>`,否则会返回 401。
+
+### 📚 典型工作流串联
+
+```bash
+# 1. 本地开发完,先编译当前平台跑通
+make build && ./scripts/deploy.sh restart server
+
+# 2. 提交后准备发版,Mac 上交叉编译 + 推灰度环境
+GOOS=linux GOARCH=amd64 make build
+IMAGE_PREFIX=harbor.x.com/tacacs make docker-release SERVICE=all
+# → 灰度环境 pull :latest,跑两天
+
+# 3. 灰度通过,promote 到 :stable 给生产
+IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=20260526-103015 \
+    make docker-promote SERVICE=all
+# → 生产侧 pin :stable,自动滚动到新 digest
+
+# 4. 出问题需要回滚?promote 一个旧时戳到 stable 即可
+IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=20260520-091233 \
+    make docker-promote SERVICE=all
+```
 
 ---
 

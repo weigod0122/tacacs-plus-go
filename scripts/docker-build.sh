@@ -8,6 +8,7 @@
 #   scripts/docker-build.sh build <service|all>             # 只构建
 #   scripts/docker-build.sh push  <service|all>             # 只推送已存在的镜像
 #   scripts/docker-build.sh build --push <service|all>      # 构建 + 推送
+#   scripts/docker-build.sh promote <service|all>           # 把已发布的 tag 重新打 alias 推回 (默认 alias=stable)
 #
 # 兼容老用法(隐式 build):
 #   scripts/docker-build.sh <service|all>
@@ -68,6 +69,7 @@ Commands:
     build           Build image from build/${PLATFORM}/<service>
     push            Push existing image to registry
     build --push    Build then push
+    promote         给已发布的镜像追加一个 alias tag (默认 stable),不重新编译
 
 Services: ${SERVICES[*]}, all
 
@@ -78,11 +80,22 @@ Tag policy:
     让 \`docker pull <image>\` 默认拉到最新。
     打 release 显式传 IMAGE_TAG=v1.2.0,会跳过时间戳直接用。
 
+Promote (latest → stable 提升):
+    构建产物默认带 :<timestamp> + :latest,生产想要 pin 一个稳定版本时,
+    用 promote 把某个已发布的时戳重新打成 :stable (或自定义 alias) 推回 registry。
+    不重新编译,registry 侧 :<target> 与 :<source> 指向同一个 digest。
+    本地没有该镜像时会先 docker pull。
+
+    必填: IMAGE_PREFIX (带 registry), SOURCE_TAG (要 promote 的源 tag)
+    可选: TARGET_TAG (默认 stable)
+
 Environment overrides:
     IMAGE_PREFIX  Image name prefix              (default: tacacs)
-                  推送时必须带 registry,会拼成 <prefix>/<service>:<tag>
+                  推送/promote 时必须带 registry,会拼成 <prefix>/<service>:<tag>
                   例: IMAGE_PREFIX=harbor.x.com/tacacs → harbor.x.com/tacacs/server:tag
     IMAGE_TAG     Image tag                      (default: UTC build timestamp)
+    SOURCE_TAG    promote 的源 tag               (无默认,promote 必填)
+    TARGET_TAG    promote 的目标 alias           (default: stable)
     PLATFORM      Source binary platform subdir  (default: linux_amd64)
 
 Examples:
@@ -99,7 +112,12 @@ Examples:
     # 打 release: 显式传 release 版本号
     IMAGE_TAG=v1.2.0 $(basename "$0") build all
 
-注意: 推送前先 docker login <registry>。
+    # promote: 把 20260526-103015 这版标记为 stable 推到 registry
+    IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=20260526-103015 $(basename "$0") promote server
+    # 自定义 alias 名:
+    IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=v1.2.0 TARGET_TAG=production $(basename "$0") promote all
+
+注意: 推送/promote 前先 docker login <registry>。
 EOF
     exit 1
 }
@@ -188,6 +206,33 @@ push_one() {
     echo "    ✓ pushed ${latest}"
 }
 
+# promote_one: 把 ${IMAGE_PREFIX}/<svc>:${SOURCE_TAG} 重新打成
+# ${IMAGE_PREFIX}/<svc>:${TARGET_TAG} 推回 registry。
+# 不重新编译,registry 侧两个 tag 指向同一个 digest;
+# 本地缺源镜像时先 docker pull,让 promote 在任意机器都能跑(不依赖原始构建机)。
+promote_one() {
+    local svc="$1"
+    local source_image="${IMAGE_PREFIX}/${svc}:${SOURCE_TAG}"
+    local target_image="${IMAGE_PREFIX}/${svc}:${TARGET_TAG}"
+
+    if ! docker image inspect "$source_image" >/dev/null 2>&1; then
+        echo "==> Pulling ${source_image} (not in local daemon)"
+        if ! docker pull "$source_image"; then
+            echo "Error: failed to pull ${source_image}"
+            echo "  hint: 检查 IMAGE_PREFIX / SOURCE_TAG 是否拼对,以及 docker login 状态"
+            exit 1
+        fi
+    fi
+
+    echo "==> Tagging ${source_image}"
+    echo "         → ${target_image}"
+    docker tag "$source_image" "$target_image"
+
+    echo "==> Pushing ${target_image}"
+    docker push "$target_image"
+    echo "    ✓ promoted ${svc}: ${SOURCE_TAG} → ${TARGET_TAG}"
+}
+
 run_for_target() {
     local action="$1" target="$2"
     case "$target" in
@@ -228,6 +273,26 @@ case "$cmd" in
     push)
         [[ $# -lt 1 ]] && usage
         run_for_target push_one "$1"
+        ;;
+    promote)
+        [[ $# -lt 1 ]] && usage
+        # SOURCE_TAG 必填(没有默认值),源 tag 都不知道是哪个就别玩 promote;
+        # TARGET_TAG 默认 stable,符合「latest 灰度 / stable 生产」的常见拓扑。
+        : "${SOURCE_TAG:?SOURCE_TAG 必填,例: SOURCE_TAG=20260526-103015 或 SOURCE_TAG=v1.2.0}"
+        TARGET_TAG="${TARGET_TAG:-stable}"
+        # promote 必须推到真 registry,不允许默认 prefix 兜底(否则会推到 Docker Hub)。
+        if [[ "$IMAGE_PREFIX" != */* ]]; then
+            echo "Error: IMAGE_PREFIX='${IMAGE_PREFIX}' 不像 registry 地址 (缺 '/')."
+            echo "  promote 前请设置带 registry 的 prefix:"
+            echo "    IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=... $(basename "$0") promote ${1}"
+            exit 1
+        fi
+        # 同 tag 自指 = 没意义,提前拒绝避免误用
+        if [[ "$SOURCE_TAG" == "$TARGET_TAG" ]]; then
+            echo "Error: SOURCE_TAG (${SOURCE_TAG}) 和 TARGET_TAG (${TARGET_TAG}) 相同,promote 无效"
+            exit 1
+        fi
+        run_for_target promote_one "$1"
         ;;
     -h|--help|help)
         usage

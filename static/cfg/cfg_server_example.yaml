@@ -8,7 +8,8 @@ log_file_path: "./logs/"#日志文件目录（server_app.log / server_audit.log 
 swm_auth:
   enforce: true #生产环境建议开启
   shared_secret_env: "SWM_SHARED_KEY"#优先从环境变量读取共享密钥
-  shared_secret: "shared_secret"#与 swm 端 swm_shared_secret 保持一致
+  # shared_secret_file: "/etc/tacacs/swm.key"#env 未设置时从文件读取（容器场景常用，文件挂载 secret）
+  shared_secret: "shared_secret"#与 swm 端 swm_shared_secret 保持一致（env / file 都没命中时兜底）
   max_skew_seconds: 300 #允许的时间戳偏移（秒），防重放
   allowed_origin: ""#留空表示不校验 Origin
   #源 IP 白名单（CIDR 格式，单 IP 必须带 /32 或 /128 后缀）。
@@ -20,7 +21,7 @@ swm_auth:
   allowed_cidrs:
     - "10.0.0.0/8"
 
-#飞书通知（审批流提醒、权限变更通知）
+#飞书通知（审批流提醒、权限变更通知、进程 panic 告警）
 feishu:
   enabled: true
   app_id_env: "FEISHU_APP_ID"#优先从环境变量读取

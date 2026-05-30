@@ -9,6 +9,7 @@ require (
 	github.com/gin-gonic/gin v1.12.0
 	github.com/go-sql-driver/mysql v1.10.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.2
+	github.com/pires/go-proxyproto v0.12.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/weigod0122/go-logger v0.0.0-20250807034230-be8fc499c549
 	golang.org/x/crypto v0.52.0

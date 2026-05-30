@@ -125,8 +125,19 @@ type ClientGlobalConfig struct {
 	Database    map[string]map[string]DatabaseInfo `yaml:"database"`
 	Http        string                             `yaml:"http"`
 	Manager     string                             `yaml:"manager"`
-	TacPlus     map[string]string                  `yaml:"tacPlus"`
+	TacPlus     TacPlusConfig                      `yaml:"tacPlus"`
 	Feishu      FeishuConfig                       `yaml:"feishu"`
+}
+
+// TacPlusConfig 是 client 的 TACACS+ 监听配置。
+// 历史上这里是 map[string]string,新增 ProxyTrustedCidrs 这种切片类型字段
+// 用 map 表达不了,所以整体改成结构体;同时让字段含义在编译期就有类型保障。
+type TacPlusConfig struct {
+	IP                string   `yaml:"ip"`
+	Port              string   `yaml:"port"`
+	ShareKey          string   `yaml:"shareKey"`
+	DSCP              string   `yaml:"dscp"`
+	ProxyTrustedCidrs []string `yaml:"proxyTrustedCidrs"`
 }
 
 // SwmGlobalConfig 是 swm 前端 + 反代进程的配置。

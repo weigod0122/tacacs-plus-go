@@ -26,3 +26,15 @@ tacPlus:
   port: "49"#可指定监听端口
   shareKey: "shareKey"#需要接入tacacs的设备上配置的预共享秘钥
   dscp: "0"#DSCP标记值(0-63)，用于QoS流量分类，0表示不设置
+  # PROXY protocol 可信源 CIDR 列表。仅当上游 LB（HAProxy / DPVS / Nginx Stream 等）开启 send-proxy 时才需要配置。
+  # 留空 / 整段缺省 = 不启用 PROXY 解析，RemoteAddr() 取 TCP 对端；
+  # 非空 = 仅当连接源 IP 落在以下任一 CIDR 内才解析 PROXY 头并以头里的原始客户端 IP 作为 RemoteAddr，其余源连接按真实 TCP 对端处理。
+  proxyTrustedCidrs: []
+  #  - "10.0.0.0/8"
+  #  - "192.168.100.0/24"
+
+#飞书通知（进程 panic 告警，向 manager 指定的飞书用户发卡片）
+feishu:
+  enabled: true
+  app_id_env: "FEISHU_APP_ID"#优先从环境变量读取
+  app_secret_env: "FEISHU_APP_SECRET"#优先从环境变量读取

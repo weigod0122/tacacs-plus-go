@@ -27,7 +27,7 @@ swm_shared_secret_env: "SWM_SHARED_KEY"
 swm_shared_secret_file: ""
 swm_shared_secret: "shared_secret"#与 server 端 swm_auth.shared_secret 保持一致
 
-#飞书通知（进程 panic 告警）
+#飞书通知（进程 panic 告警，向 manager 指定的飞书用户发卡片）
 feishu:
   enabled: true
   app_id_env: "FEISHU_APP_ID"#优先从环境变量读取

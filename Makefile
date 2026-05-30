@@ -20,7 +20,7 @@ OUT_DIR  = $(BUILD_DIR)/$(GOOS)_$(GOARCH)
 
 SUPPORTED := linux/amd64 linux/arm64 darwin/amd64 darwin/arm64
 
-.PHONY: all build clean release check-platform docker-image docker-push docker-release $(addprefix build-,$(SERVICES)) $(addprefix docker-,$(SERVICES))
+.PHONY: all build clean build-all-platforms check-platform docker-image docker-push docker-release docker-promote $(addprefix build-,$(SERVICES)) $(addprefix docker-,$(SERVICES))
 
 all: build
 
@@ -53,7 +53,7 @@ build-client: check-platform
 build-swm: check-platform
 	GOOS=$(GOOS) GOARCH=$(GOARCH) $(GO) build -ldflags "$(LDFLAGS)" -o $(OUT_DIR)/swm ./cmd/swm
 
-release:
+build-all-platforms:
 	@for platform in $(SUPPORTED); do \
 		os=$${platform%/*}; \
 		arch=$${platform#*/}; \
@@ -84,6 +84,18 @@ docker-push:
 # 用法: IMAGE_PREFIX=harbor.x.com/tacacs IMAGE_TAG=v1.2.0 make docker-release SERVICE=all
 docker-release:
 	@./scripts/docker-build.sh build --push $(SERVICE)
+
+# docker-promote: 把已发布的某个 tag 重新打 alias 推回 registry,不重新编译。
+# 典型用法: 灰度跑 :latest / :<timestamp>,确认稳定后 promote 到 :stable 给生产用,
+# registry 侧 :stable 与源 tag 指向同一个 digest,生产 pin :stable 只在 promote 时变。
+# SOURCE_TAG 必填,TARGET_TAG 默认 stable;本地没源镜像时脚本会先 docker pull。
+# 用法:
+#   IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=20260526-103015 make docker-promote SERVICE=server
+#   IMAGE_PREFIX=harbor.x.com/tacacs SOURCE_TAG=v1.2.0 TARGET_TAG=production make docker-promote SERVICE=all
+SOURCE_TAG ?=
+TARGET_TAG ?= stable
+docker-promote:
+	@SOURCE_TAG=$(SOURCE_TAG) TARGET_TAG=$(TARGET_TAG) ./scripts/docker-build.sh promote $(SERVICE)
 
 # 单服务快捷方式: make docker-server / docker-client / docker-swm
 $(addprefix docker-,$(SERVICES)):

@@ -48,8 +48,8 @@ func httpApiHealth(c *gin.Context) {
 // 监听 ip 是 0.0.0.0 / :: 这类未指定地址时,改成 127.0.0.1 / ::1 探本机即可。
 func probeTacPlusListener() error {
 	tp := cfg.ClientConfig().TacPlus
-	host := tp["ip"]
-	port := tp["port"]
+	host := tp.IP
+	port := tp.Port
 	if port == "" {
 		return fmt.Errorf("tacPlus.port not configured")
 	}

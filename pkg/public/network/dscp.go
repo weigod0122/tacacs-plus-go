@@ -10,6 +10,15 @@ import (
 	"tacacs/pkg/public/log"
 )
 
+// rawConner 是「包装型 net.Conn」对外暴露底层连接的结构性约束。
+// 典型实现:开启 PROXY protocol 后 Accept 返回的 *proxyproto.Conn —— 它用 net.Conn 接口
+// 对外暴露,但握着真正的 *net.TCPConn,自身不直接提供 SyscallConn。
+// 这里用 duck typing 而不是直接 import 具体包,避免 network 这个底层工具包反向依赖
+// 上层用到的 proxy 库;任何提供 Raw() net.Conn 的类型都能被解包。
+type rawConner interface {
+	Raw() net.Conn
+}
+
 // SetDSCP 设置连接的 DSCP 标记
 // dscp: DSCP 值 (0-63)，0 表示不设置
 // conn: 网络连接
@@ -25,6 +34,12 @@ func SetDSCP(conn net.Conn, dscp string) error {
 
 	if dscpValue < 0 || dscpValue > 63 {
 		return fmt.Errorf("DSCP value %d out of range (0-63)", dscpValue)
+	}
+
+	// 包装型连接(如 *proxyproto.Conn)只实现 net.Conn,需要先剥到底层 *net.TCPConn
+	// 才能拿 syscall.RawConn 调 setsockopt。一层即可,目前没有多层包装的场景。
+	if w, ok := conn.(rawConner); ok {
+		conn = w.Raw()
 	}
 
 	// 检测连接类型和 IP 版本
