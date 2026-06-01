@@ -1,0 +1,122 @@
+syntax = "proto3";
+
+package infra.loghub.v1;
+
+option go_package = "gitlab.xaminim.com/infra/system_group/log-hub/protocol/protobuf/loghub;loghub";
+
+// LogHubService - public log hub
+service LogHubService {
+  rpc Write(WriteRequest) returns (WriteResponse);
+  rpc Bulk(BulkRequest) returns (BulkResponse);
+  rpc ListStreams(ListStreamsRequest) returns (ListStreamsResponse);
+  rpc DescribeStream(DescribeStreamRequest) returns (DescribeStreamResponse);
+}
+
+// LogEvent - simplified OpenTelemetry Logs model
+message LogEvent {
+  string stream = 1;
+  int64 timestamp_unix_nano = 2;
+  int64 observed_timestamp_unix_nano = 3;
+  string severity_text = 4;
+  int32 severity_number = 5;
+  string trace_id = 6;
+  string span_id = 7;
+  map<string, AttributeValue> attributes = 8;
+  bytes body = 9;
+  map<string, AttributeValue> resource = 10;
+}
+
+message AttributeValue {
+  oneof value {
+    string string_value = 1;
+    int64  int_value    = 2;
+    double double_value = 3;
+    bool   bool_value   = 4;
+    AttributeArray array_value = 5;
+  }
+}
+
+message AttributeArray {
+  repeated AttributeValue values = 1;
+}
+
+message WriteRequest {
+  LogEvent event = 1;
+}
+
+message WriteResponse {
+  string event_id = 1;
+  string stream   = 2;
+  string backend  = 3;
+}
+
+message BulkRequest {
+  repeated LogEvent events = 1;
+}
+
+message BulkResponse {
+  repeated BulkItemResult items = 1;
+  int32 success_count = 2;
+  int32 failure_count = 3;
+  int64 took_ms = 4;
+}
+
+message BulkItemResult {
+  bool   success  = 1;
+  string event_id = 2;
+  string stream   = 3;
+  ItemError error = 10;
+}
+
+message ListStreamsRequest {}
+
+message ListStreamsResponse {
+  repeated StreamSummary streams = 1;
+}
+
+message StreamSummary {
+  string name    = 1;
+  string backend = 2;
+  string body_format = 3;
+  int32  attribute_count = 4;
+  repeated string allowed_callers = 5;
+}
+
+message DescribeStreamRequest {
+  string name = 1;
+}
+
+message DescribeStreamResponse {
+  StreamConfig stream = 1;
+}
+
+message StreamConfig {
+  string name = 1;
+  string backend = 2;
+  string body_format = 3;
+  repeated AttributeSchema attributes = 4;
+  repeated string allowed_callers = 5;
+  string retention = 6;
+  ESBackendConfig es = 10;
+}
+
+message AttributeSchema {
+  string name = 1;
+  // keyword / text / integer / long / double / boolean / date / ip
+  string type = 2;
+  bool   required = 3;
+}
+
+message ESBackendConfig {
+  string index_pattern = 1;
+  string template_name = 2;
+  string cluster       = 3;
+}
+
+// Item error - reused from old proto, kept for compat
+message ItemError {
+  string code = 1;
+  string message = 2;
+  string field   = 3;
+  string es_error_type = 4;
+}

@@ -63,7 +63,7 @@ func (h *myHandler) HandleAuthenStart(ctx context.Context, a *tacplus.AuthenStar
 		if err != nil || c.Abort || getUserNum > 5 {
 			info.AuthenStatus = "getUserError"
 			info.Details = "Get User Num Exceed 5"
-			LogAuthen(info)
+			LogAuthen(ctx, info)
 			return &tacplus.AuthenReply{Status: tacplus.AuthenStatusFail}
 		}
 		user = c.Message
@@ -93,7 +93,7 @@ func (h *myHandler) HandleAuthenStart(ctx context.Context, a *tacplus.AuthenStar
 		if err != nil || c.Abort || getPassNum > 5 {
 			info.AuthenStatus = "getPassError"
 			info.Details = "Get User Password Num Exceed 5"
-			LogAuthen(info)
+			LogAuthen(ctx, info)
 			return &tacplus.AuthenReply{Status: tacplus.AuthenStatusFail}
 		}
 		pass = c.Message
@@ -139,7 +139,7 @@ func (h *myHandler) HandleAuthenStart(ctx context.Context, a *tacplus.AuthenStar
 		AuthenReply = &tacplus.AuthenReply{Status: tacplus.AuthenStatusFail}
 	}
 
-	LogAuthen(info)
+	LogAuthen(ctx, info)
 	return AuthenReply
 }
 
@@ -216,7 +216,7 @@ func (h *myHandler) HandleAuthorRequest(ctx context.Context, a *tacplus.AuthorRe
 		AuthorResponse = &tacplus.AuthorResponse{Status: tacplus.AuthorStatusFail}
 	}
 
-	LogAuthor(info)
+	LogAuthor(ctx, info)
 	return AuthorResponse
 
 }
@@ -249,7 +249,7 @@ func (h *myHandler) HandleAcctRequest(ctx context.Context, a *tacplus.AcctReques
 	info.AuthenService = int16(a.AuthenService)
 	info.Arg = a.Arg
 	info.Cmd = cmd
-	LogAccount(info)
+	LogAccount(ctx, info)
 	return &tacplus.AcctReply{
 		Status: tacplus.AcctStatusSuccess,
 	}

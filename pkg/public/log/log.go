@@ -31,20 +31,20 @@ func InitAppLog(item, logPath string) error {
 		return fmt.Errorf("mkdir log path failed: %v", err)
 	}
 
-	_ = Logger.Detach("console")
+	//_ = Logger.Detach("console")
 	_ = Logger.Attach("file", gologger.LOGGER_LEVEL_DEBUG, &gologger.FileConfig{
 		Filename:  fmt.Sprintf("%v/%v_app.log", logPath, item),
 		DateSlice: "d",
 		Format:    "%millisecond_format% [%level_string%] [%file%:%line%] %body%",
 	})
 
-	_ = DebugLogger.Detach("console")
+	//_ = DebugLogger.Detach("console")
 	_ = DebugLogger.Attach("file", gologger.LOGGER_LEVEL_DEBUG, &gologger.FileConfig{
 		Filename:  fmt.Sprintf("%v/%v_debug.log", logPath, item),
 		DateSlice: "d",
 		// DebugLog 自己用 runtime.Caller 把真实调用点拼进 body,这里不再用
 		// gologger 的 %file%:%line%——否则永远显示 log.go:DebugLog 那一行。
-		Format: "%millisecond_format% [%level_string%] %body%",
+		Format: "[DEBUG]%millisecond_format% [%level_string%] %body%",
 	})
 	return nil
 }

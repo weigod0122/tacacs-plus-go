@@ -593,6 +593,17 @@ tacPlus:
   shareKey: "your-tacacs-shared-key"
   dscp: "0"
   proxyTrustedCidrs: []          # 可选: 上游 LB 启用 send-proxy 时,填可信源 CIDR 列表(YAML 切片);留空 = 不启用 PROXY 解析
+
+# 可选: 把三类协议流水(account/authen/author)异步旁路推到 log-hub gRPC 服务
+# enabled=false 关闭(默认),不影响本地文件落盘;
+# enabled=true 必须先按 pkg/public/loghub/loghub.proto 自建 LogHubService 服务端,
+#              并保证 target/app_name 配齐,否则启动期 Init 失败,进程直接退出 —— 详见
+#              下文「📝 日志收集与归档 → 🛰️ 可选:gRPC 旁路上报到 log-hub」一节
+logHub:
+  enabled: false
+  target: "loghub.internal:9000"
+  app_name: "tacacs-client"
+  queue_size: 0                  # 0 = 包内默认 100000(软上限,仅作 OOM 防线)
 ```
 
 </details>
@@ -1204,11 +1215,33 @@ flowchart LR
 
 > 🔢 **协议三件套(`client_tac_plus_*.log`)的字段定义**在 `pkg/public/tacplus/struct.go`,典型记账行包含 `time / user / switchAddr / serverAddr / cmd / arg[] / privLvl / authenMethod / isSingleConnect / tacacsClient` 等键,sonic 序列化,小驼峰命名。Client 节点越多、设备越活跃,这个文件增长越快,**优先纳入集中收集**。
 
-### ⚠️ 前端"日志"页:后端接口尚未适配
+### ⚠️ 前端「日志」页:跳转到外部日志系统
 
-SwM 管理员视图下保留了「日志」入口(`static/js/pages/log.js`),设计上调用 `GET /tacacs/log/get/simple?date=YYYY-MM-DD` 拉一整天的 `client_tac_plus_account.log` 内容做客户端分面筛选。当前版本**后端 Server 没有注册这个路由**,直接打开页面会收到 404 / 502;`adminOnlyPrefixes` 已经把 `/tacacs/log/` 列为管理员独占前缀,但后端 handler 仍是 TODO。
+SwM 下「操作日志」入口(`static/js/pages/log.js`)**不再做内置查询**,而是按 TACACS+ 三类协议日志(认证 / 授权 / 记账)各渲染一个按钮,点击在新 tab(`window.open(url, "_blank", "noopener,noreferrer")`,防 tab-nabbing)打开管理员预先配置的外部日志系统(ELK / Loki / Grafana / ClickHouse / Splunk 任选,SwM 不感知后端实现)。三类可分别投向不同的目的地或同系统的不同视图。
 
-在后端 handler 补齐之前,**请把日志查询能力放到外部存储里完成**(ES / Loki / ClickHouse / Splunk 任选),前端页面可以临时隐藏或忽略 —— 这也是更可扩展的方案,因为内置接口受限于单文件、单日、无分页、需要 admin 在线浏览器查的几个硬约束,扛不住生产规模的协议流水。
+每条日志类型的"是否对普通用户开放"**独立可控**——管理员可以只把记账日志开放给所有人,认证 / 授权仅自己可见。
+
+配置持久化在新表 `tacacs_misc`(`static/sql/tacacs_misc.sql`,通用 K/V 杂项配置表,`id` BIGINT PK + `k` 唯一索引 + `v` VARCHAR(2048) + `description` VARCHAR(255) 自述列),共 6 个 key:
+
+| key                                | 含义                                              |
+| ---------------------------------- | ------------------------------------------------- |
+| `log_redirect_url_authen`          | 认证日志跳转 URL(可空,空则按钮 disable)            |
+| `log_redirect_url_author`          | 授权日志跳转 URL(可空,空则按钮 disable)            |
+| `log_redirect_url_account`         | 记账日志跳转 URL(可空,空则按钮 disable)            |
+| `log_redirect_visible_authen`      | `"1"` 普通用户能看到认证日志按钮,否则仅管理员      |
+| `log_redirect_visible_author`      | `"1"` 普通用户能看到授权日志按钮,否则仅管理员      |
+| `log_redirect_visible_account`     | `"1"` 普通用户能看到记账日志按钮,否则仅管理员      |
+
+普通用户侧栏「操作日志」入口的渲染条件:**任意一种类型同时满足 visible=1 且 URL 非空**(只开 visible 但 URL 还没填等中间态不会让用户进到空页);进入页面后,non-admin 只能看到 visible+url 都齐的那几个按钮,admin 永远看到全部 3 个(URL 空的 disable,方便观察哪些没配)。
+
+> 💡 `description` 列是给 DBA / 排障的"这一行是干什么用的"自述,**权威源在 Go 代码**(`pkg/public/db/misc.go::MiscDescriptions`)。server 启动时 `db.SyncMiscDescriptions` 把代码里每条说明写入/校正到 DB(行不存在 → 连同 `v=''` 一起 INSERT;行存在但 description 跟代码不一致 → 只 UPDATE description,**绝不动 v**);业务运行期 `db.UpsertMisc` 只动 `v`,从不动 description。新增 key 时只需在 `MiscKey*` 常量 + `MiscDescriptions` map 各加一行,SQL 文件不动 —— 重启 server 即同步到所有环境。
+
+管理员在「系统设置」页可读写,走以下两个 Server 接口(method-aware ACL:GET 对所有已登录用户开放,POST 仅管理员;两层 ACL 在 swm proxy + server middleware 各加一份 `adminWritePrefixes: /tacacs/system/`):
+
+- `GET /tacacs/system/log-redirect-config` → `{code, data: {authen, author, account, visibleAuthen, visibleAuthor, visibleAccount}}`,未配置项为空串 / false。**对所有已登录用户开放**——前端 bootstrap 时拉一次,普通用户据此决定是否在侧栏渲染「操作日志」入口。
+- `POST /tacacs/system/log-redirect-config` body 同上六字段 → 三个 URL 独立校验(空串合法,非空必须 `http(s)://` 绝对地址),三个 visible* 落库为 `"1"` / `"0"`,全部走 `UpsertMisc` 进 `tacacs_misc`。**仅管理员**(命中 `adminWritePrefixes` 的写入分支)。
+
+这样做的好处是把"协议流水的展现"完全下放给专业日志栈 —— 内置接口扛不住单文件、单日、无分页的生产规模,而 ES/Loki 等天然支持分桶、检索、告警。Client 端怎么把日志推到那套系统,见下一节。
 
 ### 🛰️ 推荐做法:Client 侧采集 → 集中存储 → 本地定期清理
 
@@ -1294,6 +1327,53 @@ EOF
 > ⚠️ **`copytruncate` 与采集器位点的坑**:Filebeat/Fluent Bit 默认按 inode 追踪文件偏移,`copytruncate` 不换 inode 而是把文件截断,采集器看到的"长度变短"会被当成轮转事件 —— 一般能正常处理,但偶发会丢/重最后一两条。如果数据完整性要求高,改用不带 `copytruncate` 的 logrotate(配合 `postrotate` 给进程发信号重开文件),或者直接让采集器自己按 `*` glob 滚动文件(本项目自带的按天/按小时文件名天然符合),把 logrotate 退化成"只做删除"的工具。
 
 **(4) Server / SwM 的 `*_audit.log` 是合规留痕来源**,本地保留周期建议覆盖审计回溯窗口(常见 180 ~ 365 天),或者也走 ES 集中化 + 单独索引 + 更长 ILM 保留策略。`*_app.log` 排障用,7 ~ 30 天足够。
+
+### 🛰️ 可选:gRPC 旁路上报到 log-hub
+
+Client 进程自带一条**异步旁路**:在写本地 `client_tac_plus_*.log` 的同时,把 account/authen/author 三类协议流水推到一个 gRPC log-hub 服务。本地文件**始终是 source of truth**,旁路任何失败/丢弃都不会触发本地回退(因为本地一直在同步写),也绝不阻塞 tac+ 主路径。
+
+**适用场景**:已经自建了一套统一的 gRPC log-hub 基础设施,希望省一条 Filebeat / Vector 采集链路,让多个 Client 节点直接落进集中存储。**常规部署请走上一节的「文件 → 采集器 → ES/Loki」管线**,那条路径成熟、可观测、无需自研服务端。
+
+> ⚠️ **enabled=true 之前必须自行实现服务端**: 项目只内置了**客户端 stub** (`pkg/public/loghub/loghub.pb.go` / `loghub_grpc.pb.go`),`pkg/public/loghub/loghub.proto` 是接口契约。把 `logHub.enabled` 改成 `true` 之前,`logHub.target` 指向的地址必须有一个实现了 `LogHubService.Bulk(BulkRequest) returns (BulkResponse)` 的 gRPC 服务在跑;否则 Client 启动期 `Init` 失败,**进程直接退出**(这是有意设计的强一致性 —— 避免"以为在上报、实际没上"的静默故障)。
+>
+> 实现端只需要消费 `BulkRequest.events` 这一个字段(`stream` / `timestamp_unix_nano` / `attributes` 等),`BulkResponse` 里回填 `success_count` / `failure_count` 即可,其余可选字段(`items[].event_id` / `took_ms` / `WriteResponse` / `ListStreams` / `DescribeStream`)Client 全部不用。Client 通过 outgoing metadata `x-loghub-caller=<app_name>` 标识自身,server 可据此做 stream 鉴权。
+
+**配置示例**(Apollo Key `client` 或本地 `cfg_client.yaml` 任一):
+
+```yaml
+logHub:
+  enabled: false                       # 默认关闭,完全不连
+  target: "loghub.internal:9000"       # gRPC host:port; enabled=true 时必填
+  app_name: "tacacs-client"            # 上报 metadata x-loghub-caller; enabled=true 时必填
+  queue_size: 0                        # 0 = 包内默认 100000(软上限)
+```
+
+**异步路径关键行为**:
+
+
+| 行为         | 说明                                                                                                |
+| ------------ | --------------------------------------------------------------------------------------------------- |
+| 入队         | 非阻塞 append + cond.Signal,不阻塞 tac+ 主路径                                                     |
+| 攒批         | 单 worker 唤醒后一次最多取 300 条,合并一次`Bulk` 调用                                              |
+| 重试         | 整批 RPC 失败时线性退避(100ms / 200ms)共重试 2 次,仍失败 → 整批`failedFinal+=N`                  |
+| 部分失败     | server 返回`success_count / failure_count` 不一致时**不重试**(避免重复写,proto 也没回填原 event 指针) |
+| 软上限       | `queue_size` 仅作为代码层 OOM 防线;正常负载下 worker 持续抽走,队列长期接近 0,**不会触发丢弃**       |
+| panic 自愈   | worker 单次迭代 panic 自动 recover + 重启(带 1s 退避),累一笔`workerPanic` 计数                   |
+| 退出         | `SIGTERM` 后给 5 秒 flush 窗口排空残余;超时记`remaining=N`,本地文件仍完整                          |
+
+**可观测信号**(每 60 秒一行 `client_app.log`):
+
+```
+logHub metrics: queued=X enqueued=A sent=B (+δb) droppedFull=C (+δc) failedFinal=D (+δd) workerPanic=P (+δp)
+```
+
+
+| 现象                                                                | 解读                                                                                  |
+| ------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `queued≈0 sent≈enqueued droppedFull=0 failedFinal=0 workerPanic=0` | 健康                                                                                  |
+| `queued↑ failedFinal↑(+)`                                         | 下游 log-hub 有问题,但还没溢出软上限                                                  |
+| `queued≈queue_size droppedFull(+)`                                 | 下游已崩 + 队列溢出;本地文件仍可信,赶紧排查 log-hub                                  |
+| `workerPanic(+) > 0`                                                | 上报代码有偶发 bug,worker 已自愈,需要查`client_app.log` 里 `panic recovered` 的堆栈 |
 
 ### 📋 一句话总结
 

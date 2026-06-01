@@ -7,8 +7,11 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
+
 	tacacsclient "tacacs/pkg/client"
 	"tacacs/pkg/client/http"
+	"tacacs/pkg/client/logHub"
 	"tacacs/pkg/client/tac_plus"
 	"tacacs/pkg/public/cfg"
 	"tacacs/pkg/public/db"
@@ -53,6 +56,23 @@ func main() {
 		return
 	}
 
+	// log-hub 初始化:
+	// enabled=false → 不连,三类上报函数会自动 short-circuit;
+	// enabled=true  → target / app_name 必填,且 Init 必须成功,否则进程直接退出。
+	if cfg.ClientConfig().LogHub.Enabled {
+		target := cfg.ClientConfig().LogHub.Target
+		appName := cfg.ClientConfig().LogHub.AppName
+		if target == "" || appName == "" {
+			log.Logger.Errorf("logHub enabled but target/app_name missing: target=%q app=%q", target, appName)
+			return
+		}
+		if err := logHub.Init(target, appName, cfg.ClientConfig().LogHub.QueueSize); err != nil {
+			log.Logger.Errorf("logHub init failed: target=%s app=%s err=%v", target, appName, err)
+			return
+		}
+		log.Logger.Infof("logHub init success: target=%s app=%s", target, appName)
+	}
+
 	//tacacs认证服务启动
 	tps = tac_plus.NewTacPlusSystem()
 	tpsStartErr := tps.Start()
@@ -95,6 +115,8 @@ func catchStopSignalClient() {
 		case syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT:
 			http.Stop()
 			tps.Stop()
+			// http/tac+ 已停,确保不再有新上报;再 flush log-hub 队列
+			logHub.Stop(5 * time.Second)
 			log.Logger.Info("system stop")
 			return
 		}

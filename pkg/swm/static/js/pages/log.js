@@ -1,29 +1,31 @@
-// TACACS log viewer — date picker + multi-dimension filter.
+// External-log redirect page — up to three buttons (authen / author / account)
+// rendered per TACACS+ log type. Each opens the admin-configured URL in a new
+// tab via window.open(... "noopener,noreferrer").
+//
+// Visibility rules:
+//   - admin: always sees all 3 buttons; ones whose URL is empty are disabled
+//     so admin can spot un-configured types at a glance.
+//   - non-admin: only sees buttons where the per-type visibleX flag is true
+//     AND the URL is non-empty — both gates must pass, otherwise the type is
+//     hidden entirely (don't leak the existence of types they can't reach).
+//
+// If a non-admin has zero accessible types (either all visibility flags are
+// off, or those that are on still have empty URLs), the page shows a "no
+// access" message instead of an empty action bar.
 
 import { api } from "../core/api.js";
-import { h, mount, qsa } from "../core/dom.js";
-import { renderTable } from "../core/components/table.js";
-import { toast } from "../core/components/toast.js";
-import { t, tHeader } from "../core/i18n.js";
+import { h, mount } from "../core/dom.js";
+import { t } from "../core/i18n.js";
 
-export default async function renderLogPage(container) {
-  const today = new Date().toISOString().slice(0, 10);
-  let queryDate = today;
-  let allRows = [];
-  let filters = []; // [{ key, value }]
+const TYPES = [
+  { key: "authen",  labelKey: "log.redirect.authen",  visibleField: "visibleAuthen"  },
+  { key: "author",  labelKey: "log.redirect.author",  visibleField: "visibleAuthor"  },
+  { key: "account", labelKey: "log.redirect.account", visibleField: "visibleAccount" },
+];
 
-  const tableHost = h("div");
-  const filterRows = h("div", { class: "stack" });
-
-  const dateInput = h("input", {
-    type: "date",
-    class: "input",
-    value: queryDate,
-    onchange: (e) => { queryDate = e.target.value; },
-    style: { width: "180px" },
-  });
-
-  const queryBtn = h("button", { class: "btn btn--primary", type: "button", onclick: load }, t("log.btn.query"));
+export default async function renderLogPage(container, ctx) {
+  const statusHost = h("div", { class: "card__body stack" });
+  const buttonsHost = h("div", { class: "page__actions" });
 
   mount(container, h("div", { class: "page" }, [
     h("header", { class: "page__header" }, [
@@ -32,108 +34,50 @@ export default async function renderLogPage(container) {
         h("p", { class: "page__subtitle" }, t("log.subtitle")),
       ]),
     ]),
-    h("div", { class: "toolbar" }, [
-      h("label", { class: "field__label" }, t("log.date")),
-      dateInput,
-      queryBtn,
-      h("span", { class: "grow" }),
-      h("button", {
-        class: "btn", type: "button",
-        onclick: addFilter,
-      }, t("log.btn.add")),
-      h("button", {
-        class: "btn btn--ghost", type: "button",
-        onclick: () => { filters = []; rebuildFilterRows(); applyFilters(); },
-      }, t("log.btn.clear")),
+    h("section", { class: "card" }, [
+      statusHost,
+      h("div", { class: "card__body" }, [buttonsHost]),
     ]),
-    filterRows,
-    tableHost,
   ]));
 
-  function addFilter() {
-    filters.push({ key: "", value: "" });
-    rebuildFilterRows();
+  let cfg;
+  try {
+    const res = await api.get("/tacacs/system/log-redirect-config");
+    cfg = (res && res.data) || {};
+  } catch (err) {
+    mount(statusHost, h("p", { class: "text-danger" },
+      t("log.redirect.loadFailed") + (err.message || err)));
+    return;
   }
 
-  function rebuildFilterRows() {
-    mount(filterRows, ...filters.map((f, idx) => filterRow(f, idx)));
+  const isAdmin = !!(ctx && ctx.isAdmin);
+
+  // 决定本次要渲染的 TYPES 子集:admin 全展示;非 admin 只看 visible && url 都满足的项
+  const visibleTypes = isAdmin
+    ? TYPES
+    : TYPES.filter((typ) => !!cfg[typ.visibleField] && !!cfg[typ.key]);
+
+  if (visibleTypes.length === 0) {
+    // admin 走到这里:三个 URL 全为空,提示去系统设置配置
+    // 非 admin 走到这里:可见的 0 个,提示无访问权限
+    const msg = isAdmin ? t("log.redirect.notConfigured") : t("log.redirect.forbidden");
+    mount(statusHost, h("p", { class: "page__subtitle" }, msg));
+    return;
   }
 
-  function filterRow(filter, idx) {
-    const keys = allRows.length ? Object.keys(allRows[0]) : [];
-    const valueOptions = filter.key
-      ? Array.from(new Set(allRows.map((r) => String(r[filter.key]))))
-          .filter(Boolean)
-          .sort()
-      : [];
+  mount(statusHost, h("p", { class: "page__subtitle" },
+    t("log.redirect.pickType")));
 
-    const valueListId = `flv-${idx}`;
-    return h("div", { class: "toolbar" }, [
-      h("span", { class: "field__label" }, t("log.cond", { n: idx + 1 })),
-      h("select", {
-        class: "select",
-        onchange: (e) => { filter.key = e.target.value; rebuildFilterRows(); applyFilters(); },
-      }, [
-        h("option", { value: "" }, t("log.dim.empty")),
-        ...keys.map((k) => h("option", { value: k, selected: k === filter.key }, tHeader(k))),
-      ]),
-      h("input", {
-        class: "input",
-        list: filter.key && filter.key !== "Arg" ? valueListId : null,
-        value: filter.value,
-        placeholder: filter.key === "Arg" ? t("log.value.argPh") : t("log.value.ph"),
-        oninput: (e) => { filter.value = e.target.value; applyFilters(); },
-      }),
-      filter.key && filter.key !== "Arg"
-        ? h("datalist", { id: valueListId },
-            valueOptions.map((v) => h("option", { value: v })))
-        : null,
-      h("button", {
-        class: "btn btn--ghost btn--sm",
-        type: "button",
-        "aria-label": t("log.value.aria"),
-        onclick: () => { filters.splice(idx, 1); rebuildFilterRows(); applyFilters(); },
-      }, "×"),
-    ]);
-  }
-
-  function applyFilters() {
-    let data = allRows;
-    for (const f of filters) {
-      if (!f.key) continue;
-      if (f.key === "Arg") {
-        const v = f.value;
-        if (v) data = data.filter((r) => String(r[f.key] ?? "").includes(v));
-      } else {
-        if (f.value) data = data.filter((r) => String(r[f.key] ?? "") === f.value);
-      }
-    }
-    renderTable(tableHost, {
-      columns: inferColumns(allRows),
-      rows: data,
-      emptyText: t("log.empty"),
-    });
-  }
-
-  async function load() {
-    renderTable(tableHost, { columns: [], rows: [], loading: true });
-    try {
-      const res = await api.get("/tacacs/log/get/simple", { query: { date: queryDate } });
-      allRows = (res && res.data) || [];
-      rebuildFilterRows();
-      applyFilters();
-    } catch (err) {
-      toast.error(t("common.loadFailed") + (err.message || err));
-      mount(tableHost, h("div", { class: "card" }, [
-        h("div", { class: "card__body text-danger" }, t("common.loadFailed") + (err.message || err)),
-      ]));
-    }
-  }
-
-  await load();
-}
-
-function inferColumns(rows) {
-  if (rows.length === 0) return [];
-  return Object.keys(rows[0]).map((k) => ({ key: k, label: tHeader(k) }));
+  mount(buttonsHost, ...visibleTypes.map((typ) => {
+    const url = cfg[typ.key] || "";
+    return h("button", {
+      class: "btn btn--primary",
+      type: "button",
+      disabled: !url,
+      title: url || t("log.redirect.typeNotConfigured"),
+      onclick: () => {
+        if (url) window.open(url, "_blank", "noopener,noreferrer");
+      },
+    }, t(typ.labelKey));
+  }));
 }

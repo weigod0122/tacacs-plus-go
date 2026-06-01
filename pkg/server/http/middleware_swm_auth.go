@@ -96,7 +96,7 @@ func swmAuthMiddleware() gin.HandlerFunc {
 			}
 		}
 
-		if pathRequiresAdmin(path) && !isAdmin {
+		if pathRequiresAdmin(path, c.Request.Method) && !isAdmin {
 			AuditLog("forbidden user=%s path=%s method=%s reason=admin-only", user, path, c.Request.Method)
 			if conf.Enforce {
 				c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "forbidden"})

@@ -27,6 +27,14 @@ var adminOnlyPrefixes = []string{
 	"/tacacs/log/",
 }
 
+// adminWritePrefixes 是"读对所有人开放、写仅管理员"的代理路径前缀。
+// /tacacs/system/log-redirect-config 的 GET 需要给普通用户开放，让前端 bootstrap
+// 时能拿到 visibleAuthen / visibleAuthor / visibleAccount 三个开关决定是否
+// 渲染「操作日志」入口；POST 改配置仍 admin only。
+var adminWritePrefixes = []string{
+	"/tacacs/system/",
+}
+
 // adminOnlyExact 是仅管理员可调用的精确路径。
 // 注：模板（role/server/command）的写操作沿用原前端"任何登录用户均可操作"的语义，
 // 不在此列表；后端 tacacs_manager 自身做最终权限校验。
@@ -90,13 +98,20 @@ func getAdminUsers() []string {
 	return adminCache
 }
 
-func pathRequiresAdmin(path string) bool {
+func pathRequiresAdmin(path, method string) bool {
 	if _, ok := adminOnlyExact[path]; ok {
 		return true
 	}
 	for _, p := range adminOnlyPrefixes {
 		if strings.HasPrefix(path, p) {
 			return true
+		}
+	}
+	if hasBodyMethod(method) {
+		for _, p := range adminWritePrefixes {
+			if strings.HasPrefix(path, p) {
+				return true
+			}
 		}
 	}
 	return false
@@ -148,7 +163,7 @@ func TacacsProxyHandler(proxy *httputil.ReverseProxy) gin.HandlerFunc {
 		}
 
 		// (2) 路径级 ACL
-		if pathRequiresAdmin(c.Request.URL.Path) && !isAdmin {
+		if pathRequiresAdmin(c.Request.URL.Path, c.Request.Method) && !isAdmin {
 			log.Logger.Errorf("forbidden: user=%s path=%s", username, c.Request.URL.Path)
 			AuditLog("forbidden user=%s path=%s method=%s", username, c.Request.URL.Path, c.Request.Method)
 			c.JSON(http.StatusForbidden, gin.H{"code": 403, "msg": "无权访问"})

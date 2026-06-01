@@ -127,6 +127,21 @@ type ClientGlobalConfig struct {
 	Manager     string                             `yaml:"manager"`
 	TacPlus     TacPlusConfig                      `yaml:"tacPlus"`
 	Feishu      FeishuConfig                       `yaml:"feishu"`
+	LogHub      LogHubConfig                       `yaml:"logHub"`
+}
+
+// LogHubConfig 控制是否把 tacacs 三类记录(account/authen/author)旁路上报到 log-hub。
+// 本地 clog 永远是 source of truth,这里所有失败/丢弃都不影响主路径。
+// Enabled=false 时进程不连 log-hub,三类上报函数会直接 return;
+// Enabled=true 时启动阶段强制要求 Init 成功,否则进程直接退出,避免"看起来在跑但日志没上报"的静默故障。
+// QueueSize 是异步队列的"软上限",仅作为代码层 OOM 防线 —— 正常负载下 worker 持续抽走,
+// len(buf) 长期接近 0,不会触发丢弃;只在下游不可达+重试失败导致异常堆积时才会按此阈值丢弃。
+// <=0 走 logHub 包内默认值(100000)。
+type LogHubConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Target    string `yaml:"target"`
+	AppName   string `yaml:"app_name"`
+	QueueSize int    `yaml:"queue_size"`
 }
 
 // TacPlusConfig 是 client 的 TACACS+ 监听配置。

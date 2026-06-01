@@ -58,4 +58,11 @@ func configRoutes(app *gin.Engine) {
 	//缓存元数据接口（仅管理员）：强制让 client 全量重建本地缓存
 	app.POST("/tacacs/meta/refresh", httpApiMetaRefresh)
 
+	//系统设置接口：当前暴露外部日志跳转配置（3 个协议 URL + 普通用户可见性开关）。
+	//GET 对所有已登录用户开放（普通用户需要它来决定是否渲染「操作日志」入口）;
+	//POST 仅管理员（adminWritePrefixes:/tacacs/system/）。
+	system := app.Group("/tacacs/system")
+	system.GET("/log-redirect-config", httpApiSystemGetLogRedirectConfig)
+	system.POST("/log-redirect-config", httpApiSystemSetLogRedirectConfig)
+
 }

@@ -2,8 +2,6 @@ http: "0.0.0.0:8383"#可指定监听ip
 
 manager: ""#服务负责人的飞书用户ID，进程 panic 时会通过飞书卡片通知该用户
 
-log_file_path: "./logs/"#日志文件目录（client_app.log / client_tac_plus_*.log 落在这里。三服务共用同一目录时按 server_/client_/swm_ 前缀区分）
-
 #client 只用只读账号 —— 授权热路径全部走本地缓存 + read 库,
 #不需要也不应该在 client 主机配置文件里持有 write 账号密码。
 #启动时 db.Init 检测到 item=client 后只装载 read 连接,DbWrite 维持 nil。
@@ -38,3 +36,20 @@ feishu:
   enabled: true
   app_id_env: "FEISHU_APP_ID"#优先从环境变量读取
   app_secret_env: "FEISHU_APP_SECRET"#优先从环境变量读取
+
+log_file_path: "./logs/"#日志文件目录（client_app.log / client_tac_plus_*.log 落在这里。三服务共用同一目录时按 server_/client_/swm_ 前缀区分）
+
+#log-hub 上报（旁路把 account/authen/author 三类记录推到统一日志中心，本地 clog 仍是 source of truth，不受影响）
+#enabled=false：完全不连 log-hub，三类上报函数直接跳过；
+#enabled=true ：target / app_name 必填，且启动阶段强制 Init 成功，任一缺失或失败进程直接退出。
+#异步攒批：单 worker 唤醒后一次拿走 ≤300 条 → 调一次 Bulk 发出，吞吐高且尾延迟可控；
+#         队列只有软上限（默认 100000）作 OOM 防线，正常负载下 worker 持续抽走，不会丢弃；
+#         整批 RPC 失败重试 2 次（100ms/200ms 退避），仍失败 → 整批 failedFinal+=N 并打错误日志；
+#         server 返回部分失败（如 ES 单条字段超长）→ 不重试，按 successCount/failureCount 拆账；
+#         worker 单次迭代 panic 自动 recover + 重启（带 1s 退避防 CPU 打满），累一笔 workerPanic 计数；
+#         每 60s 一行 metrics 日志（queued/enqueued/sent/droppedFull/failedFinal/workerPanic）。
+logHub:
+  enabled: false
+  target: "loghub.xaminim.com:9000"#log-hub gRPC 地址 host:port
+  app_name: "tacacs-client"#上报时带的 x-loghub-caller 应用名
+  queue_size: 0#异步队列软上限,0=用包内默认值100000。仅作 OOM 防线,正常负载下不会触发丢弃,通常无需调整

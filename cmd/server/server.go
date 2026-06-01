@@ -58,6 +58,14 @@ func main() {
 		return
 	}
 
+	// 同步 tacacs_misc 表 description 列:权威源在代码 (db.MiscDescriptions),
+	// 启动时把每条说明写入/校正到 DB 的 description 列,DBA 排障 SELECT 即懂。
+	// 失败直接退出,不让半成品 server 上线。
+	if err := db.SyncMiscDescriptions(); err != nil {
+		log.Logger.Errorf("sync tacacs_misc descriptions fail:%v", err)
+		return
+	}
+
 	//http启动
 	http.Start(cfg.ServerConfig().Http)
 
