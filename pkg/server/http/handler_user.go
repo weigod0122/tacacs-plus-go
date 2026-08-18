@@ -154,12 +154,7 @@ func httpApiUserCreate(c *gin.Context) {
 }
 
 func resetUserPassword(user, password string) error {
-	err1 := db.UpdateUserStatus(user, "1")
-	err2 := db.UpdateUserPassword(user, password)
-	if err1 != nil || err2 != nil {
-		return fmt.Errorf("UpdateUserStatus: %v; UpdateUserPassword: %v", err1, err2)
-	}
-	return nil
+	return db.ResetUserPassword(user, password)
 }
 
 func httpApiUserResetPassword(c *gin.Context) {
@@ -250,6 +245,10 @@ func httpApiUserResetPassword(c *gin.Context) {
 		code = http.StatusFailedDependency
 		message = fmt.Sprintf("%v reset password failed, because:%v", req.User, err)
 	} else {
+		// A successful administrative reset is an explicit recovery action. Do
+		// not leave the target trapped behind the one-hour failed-login
+		// lockout caused by attempts with the old password.
+		checkPasswordErrUser[req.User] = 0
 		code = http.StatusOK
 		message = fmt.Sprintf("%v reset password success by operator %v", req.User, req.Operator)
 	}

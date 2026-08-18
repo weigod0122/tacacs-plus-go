@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"tacacs/pkg/public/cfg"
 	"tacacs/pkg/public/log"
 	"tacacs/pkg/public/utils"
 	"time"
@@ -98,8 +99,11 @@ func UpdateRoleByName(user, role string) {
 func CreateUser(user, PhoneNumber, email, password, notes string) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
 	insertSql := "INSERT INTO tacacs_user(user, phone_number, email, create_time, role, role_update_time, password, password_update_time, status, status_update_time, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-	passwordHash, _ := utils.HashPassword(password)
-	_, err := DbWrite.Exec(insertSql, user, PhoneNumber, email, now, "null", now, passwordHash, now, "1", now, notes)
+	passwordHash, err := utils.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	_, err = DbWrite.Exec(insertSql, user, PhoneNumber, email, now, "null", now, passwordHash, now, "1", now, notes)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
 		return err
@@ -110,14 +114,76 @@ func CreateUser(user, PhoneNumber, email, password, notes string) error {
 
 func UpdateUserPassword(user, password string) error {
 	now := time.Now().Format("2006-01-02 15:04:05")
-	passwordHash, _ := utils.HashPassword(password)
+	passwordHash, err := utils.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
 	updateSql := "UPDATE tacacs_user SET password = ?, password_update_time = ? WHERE user = ?"
-	_, err := DbWrite.Exec(updateSql, passwordHash, now, user)
+	result, err := DbWrite.Exec(updateSql, passwordHash, now, user)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
 		return err
 	}
+	if n, err := result.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("user %q does not exist", user)
+	}
 	BumpMetaVersion(MetaKeyUser)
+	return nil
+}
+
+// ResetUserPassword atomically restores a user's status and changes the
+// password.  Reset used to issue two independent UPDATEs; a client polling a
+// read replica could observe the first metadata bump with the old password and
+// cache that inconsistent snapshot.  Keeping the row update and the
+// application-level metadata bump in one transaction makes the snapshot
+// visible to replicas only after both values are committed.
+func ResetUserPassword(user, password string) error {
+	passwordHash, err := utils.HashPassword(password)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	if DbWrite == nil {
+		return fmt.Errorf("write database is not initialized")
+	}
+
+	tx, err := DbWrite.Begin()
+	if err != nil {
+		return fmt.Errorf("begin reset password transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	now := time.Now().Format("2006-01-02 15:04:05")
+	result, err := tx.Exec(
+		"UPDATE tacacs_user SET status = ?, status_update_time = ?, password = ?, password_update_time = ? WHERE user = ?",
+		"1", now, passwordHash, now, user,
+	)
+	if err != nil {
+		return fmt.Errorf("update user reset fields: %w", err)
+	}
+	if n, err := result.RowsAffected(); err == nil && n == 0 {
+		return fmt.Errorf("user %q does not exist", user)
+	}
+
+	// In trigger mode the AFTER UPDATE trigger performs this bump in the same
+	// transaction.  In triggerless mode the server owns the bump instead.
+	if conf := cfg.ServerConfig(); conf != nil && !conf.DatabaseTriggers {
+		if _, err = tx.Exec(
+			"INSERT INTO tacacs_meta (k, version) VALUES (?, 1) ON DUPLICATE KEY UPDATE version = version + 1",
+			MetaKeyUser,
+		); err != nil {
+			return fmt.Errorf("bump user metadata version: %w", err)
+		}
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("commit reset password transaction: %w", err)
+	}
+	committed = true
 	return nil
 }
 

@@ -142,8 +142,6 @@ func updateUsers() {
 
 	onDutyUsers := db.GetTacacsOnDutyUser()
 
-	tempTacacsTableUpdateTime = tacacsTableUpdateTime
-
 	startTime := time.Now()
 	log.DebugLog("1 tacacs info has updated, start handle database`s data")
 	newTacacsUserInfo := utils.NewTypedSyncMap[string, *UserInfo]()
@@ -199,9 +197,28 @@ func updateUsers() {
 	}
 	log.DebugLog("2 handle database`s data done, time consuming: %v", time.Since(startTime))
 
+	// The database may change while this snapshot is being assembled. Check
+	// the metadata once more before publishing it; otherwise a concurrent
+	// password/role update can be acknowledged with a stale snapshot and wait
+	// for the five-minute safety refresh.
+	latestTacacsTableUpdateTime, err := db.GetTablesUpdateTime()
+	if err != nil {
+		log.Logger.Errorf("recheck tacacsTableUpdateTime err, because: %v", err)
+		return
+	}
+	if latestTacacsTableUpdateTime != tacacsTableUpdateTime {
+		log.Logger.Infof("database changed while rebuilding user cache, retrying (before=%s after=%s)", tacacsTableUpdateTime, latestTacacsTableUpdateTime)
+		return
+	}
+
 	startTime2 := time.Now()
 	log.DebugLog("3 start update tacacsUserInfo")
 	updateTacacsUserInfoAndCache(newTacacsUserInfo)
+	// Only acknowledge the metadata version after the complete user/role
+	// snapshot has been rebuilt.  If a read fails or a replica briefly returns
+	// an inconsistent snapshot, the next poll must retry instead of suppressing
+	// the change until the five-minute safety refresh.
+	tempTacacsTableUpdateTime = latestTacacsTableUpdateTime
 	log.DebugLog("4 update tacacsUserInfo done, time consuming: %v", time.Since(startTime2))
 
 }
