@@ -2,10 +2,14 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
+	"fmt"
 	"tacacs/pkg/public/log"
+	"tacacs/pkg/public/logquery"
 )
 
-// tacacs_misc 中存放外部日志系统跳转配置的 6 个 key:三个 URL + 三个可见性开关。
+// tacacs_misc 中存放操作日志展示配置：外部日志系统跳转的三个 URL、三个可见性开关，
+// 以及展示方式、ClickHouse 连接和三类字段映射。
 // 三个 URL 分别对应 TACACS+ 的三种协议日志(认证 / 授权 / 记账),
 // 让管理员把不同维度的查询投到不同的外部日志系统(或同一系统的不同视图)。
 // 三个 Visible* 字段独立控制对应类型按钮是否对普通用户可见,
@@ -19,6 +23,12 @@ import (
 // 业务运行期的 UpsertMisc 只写 (k, v),从不动 description。
 // 新增 key 时:在常量、MiscDescriptions、和 handler 里各加一行即可,SQL 不动。
 const (
+	MiscKeyLogDisplayMode             = "log_display_mode"
+	MiscKeyLogClickHouseConfig        = "log_clickhouse_config"
+	MiscKeyLogClickHouseMappingAuth   = "log_clickhouse_mapping_authen"
+	MiscKeyLogClickHouseMappingAuthor = "log_clickhouse_mapping_author"
+	MiscKeyLogClickHouseMappingAcct   = "log_clickhouse_mapping_account"
+
 	MiscKeyLogRedirectURLAuthen      = "log_redirect_url_authen"
 	MiscKeyLogRedirectURLAuthor      = "log_redirect_url_author"
 	MiscKeyLogRedirectURLAccount     = "log_redirect_url_account"
@@ -31,19 +41,122 @@ const (
 // server 启动调 SyncMiscDescriptions 把这里每条文本写入/校正 DB 的 description
 // 列;新增 key 时:加常量 + 这个 map 各一行,DBA 排障时直接 SELECT 即懂。
 var MiscDescriptions = map[string]string{
-	MiscKeyLogRedirectURLAuthen:      "外部日志系统-认证日志跳转 URL;空则前端「操作日志」页该按钮 disable;非空必须 http(s)://",
-	MiscKeyLogRedirectURLAuthor:      "外部日志系统-授权日志跳转 URL;空则前端「操作日志」页该按钮 disable;非空必须 http(s)://",
-	MiscKeyLogRedirectURLAccount:     "外部日志系统-记账日志跳转 URL;空则前端「操作日志」页该按钮 disable;非空必须 http(s)://",
-	MiscKeyLogRedirectVisibleAuthen:  `认证日志按钮是否对普通用户可见:"1"=可见,"0"=仅管理员(默认)`,
-	MiscKeyLogRedirectVisibleAuthor:  `授权日志按钮是否对普通用户可见:"1"=可见,"0"=仅管理员(默认)`,
-	MiscKeyLogRedirectVisibleAccount: `记账日志按钮是否对普通用户可见:"1"=可见,"0"=仅管理员(默认)`,
+	MiscKeyLogDisplayMode:             "操作日志展示方式:external=外部链接,clickhouse=ClickHouse直查",
+	MiscKeyLogClickHouseConfig:        "操作日志 ClickHouse 连接配置(JSON);密码仅由 server 使用,不回传前端",
+	MiscKeyLogClickHouseMappingAuth:   "操作日志 ClickHouse 认证表与 AuthenInfo 字段映射(JSON)",
+	MiscKeyLogClickHouseMappingAuthor: "操作日志 ClickHouse 授权表与 AuthorInfo 字段映射(JSON)",
+	MiscKeyLogClickHouseMappingAcct:   "操作日志 ClickHouse 记账表与 AccountInfo 字段映射(JSON)",
+	MiscKeyLogRedirectURLAuthen:       "外部日志系统-认证日志跳转 URL;空则前端「操作日志」页该按钮 disable;非空必须 http(s)://",
+	MiscKeyLogRedirectURLAuthor:       "外部日志系统-授权日志跳转 URL;空则前端「操作日志」页该按钮 disable;非空必须 http(s)://",
+	MiscKeyLogRedirectURLAccount:      "外部日志系统-记账日志跳转 URL;空则前端「操作日志」页该按钮 disable;非空必须 http(s)://",
+	MiscKeyLogRedirectVisibleAuthen:   `认证日志按钮是否对普通用户可见:"1"=可见,"0"=仅管理员(默认)`,
+	MiscKeyLogRedirectVisibleAuthor:   `授权日志按钮是否对普通用户可见:"1"=可见,"0"=仅管理员(默认)`,
+	MiscKeyLogRedirectVisibleAccount:  `记账日志按钮是否对普通用户可见:"1"=可见,"0"=仅管理员(默认)`,
+}
+
+// ClickHouseLogConfig is persisted in tacacs_misc as a compact JSON value.
+// The password is deliberately never included in the public HTTP response;
+// this type stays in the server-side persistence layer.
+type ClickHouseLogConfig struct {
+	Address  string                                `json:"address"`
+	Username string                                `json:"username"`
+	Password string                                `json:"password"`
+	Database string                                `json:"database"`
+	Mappings map[logquery.LogType]logquery.Mapping `json:"mappings"`
+}
+
+func GetLogDisplayMode() (string, error) {
+	v, err := GetMisc(MiscKeyLogDisplayMode)
+	if err != nil {
+		return "", err
+	}
+	if v == "clickhouse" {
+		return "clickhouse", nil
+	}
+	return "external", nil
+}
+
+func GetClickHouseLogConfig() (ClickHouseLogConfig, error) {
+	var cfg ClickHouseLogConfig
+	raw, err := GetMisc(MiscKeyLogClickHouseConfig)
+	if err != nil {
+		return cfg, err
+	}
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+			return cfg, fmt.Errorf("decode clickhouse log config: %w", err)
+		}
+	}
+	if cfg.Mappings == nil {
+		cfg.Mappings = make(map[logquery.LogType]logquery.Mapping)
+	}
+	for typ, key := range map[logquery.LogType]string{
+		logquery.LogTypeAuthen:  MiscKeyLogClickHouseMappingAuth,
+		logquery.LogTypeAuthor:  MiscKeyLogClickHouseMappingAuthor,
+		logquery.LogTypeAccount: MiscKeyLogClickHouseMappingAcct,
+	} {
+		raw, err := GetMisc(key)
+		if err != nil {
+			return cfg, err
+		}
+		if raw == "" {
+			continue
+		}
+		var mapping logquery.Mapping
+		if err := json.Unmarshal([]byte(raw), &mapping); err != nil {
+			return cfg, fmt.Errorf("decode clickhouse %s mapping: %w", typ, err)
+		}
+		cfg.Mappings[typ] = mapping
+	}
+	return cfg, nil
+}
+
+func SaveClickHouseLogConfig(cfg ClickHouseLogConfig) error {
+	if cfg.Mappings == nil {
+		cfg.Mappings = make(map[logquery.LogType]logquery.Mapping)
+	}
+	// Keep connection credentials in one JSON document and mappings in their
+	// own values so each value remains comfortably below tacacs_misc.v's limit.
+	connectionJSON, err := json.Marshal(struct {
+		Address  string `json:"address"`
+		Username string `json:"username"`
+		Password string `json:"password"`
+		Database string `json:"database"`
+	}{cfg.Address, cfg.Username, cfg.Password, cfg.Database})
+	if err != nil {
+		return err
+	}
+	values := map[string]string{
+		MiscKeyLogClickHouseConfig: string(connectionJSON),
+	}
+	for typ, key := range map[logquery.LogType]string{
+		logquery.LogTypeAuthen:  MiscKeyLogClickHouseMappingAuth,
+		logquery.LogTypeAuthor:  MiscKeyLogClickHouseMappingAuthor,
+		logquery.LogTypeAccount: MiscKeyLogClickHouseMappingAcct,
+	} {
+		mapping := cfg.Mappings[typ]
+		b, err := json.Marshal(mapping)
+		if err != nil {
+			return fmt.Errorf("encode clickhouse %s mapping: %w", typ, err)
+		}
+		values[key] = string(b)
+	}
+	values[MiscKeyLogDisplayMode] = "clickhouse"
+	return UpsertMiscBatch(values)
+}
+
+func SaveLogDisplayMode(mode string) error {
+	if mode != "external" && mode != "clickhouse" {
+		return fmt.Errorf("unsupported log display mode %q", mode)
+	}
+	return UpsertMisc(MiscKeyLogDisplayMode, mode)
 }
 
 // SyncMiscDescriptions 启动时调一次,把 MiscDescriptions 里每个 key 的 description
 // 写入/校正到 DB。语义:
 //   - key 不存在:INSERT (k, v=”, description) —— 同时把"空 value"行也建好,
 //     避免首次 GetMisc 仍返回 ErrNoRows 走空串分支(行为一致,但 DBA SELECT
-//     时能看到完整的 6 行)。
+//     时能看到完整的配置 key 列表)。
 //   - key 已存在:ON DUPLICATE 分支只 UPDATE description,**不**带 VALUES(v),
 //     否则会把已配置的 URL / 可见性值覆盖回空串。
 //
@@ -98,5 +211,35 @@ func UpsertMisc(key, value string) error {
 		log.Logger.Errorf("upsert tacacs_misc key=%s failed: %v", key, err)
 		return err
 	}
+	return nil
+}
+
+// UpsertMiscBatch persists a logically single settings change atomically.
+func UpsertMiscBatch(values map[string]string) error {
+	if DbWrite == nil {
+		return nil
+	}
+	tx, err := DbWrite.Begin()
+	if err != nil {
+		return err
+	}
+	rollback := true
+	defer func() {
+		if rollback {
+			_ = tx.Rollback()
+		}
+	}()
+	for key, value := range values {
+		if _, err := tx.Exec(
+			"INSERT INTO tacacs_misc (k, v) VALUES (?, ?) ON DUPLICATE KEY UPDATE v = VALUES(v)",
+			key, value,
+		); err != nil {
+			return fmt.Errorf("upsert misc key=%s: %w", key, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	rollback = false
 	return nil
 }

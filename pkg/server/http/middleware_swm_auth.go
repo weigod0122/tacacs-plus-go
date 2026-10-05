@@ -30,6 +30,12 @@ var (
 
 const nonceTTL = 600 * time.Second
 
+// swmAuthVerifiedContextKey is set for every non-exempt request so handlers
+// that return user-scoped data can distinguish a signed identity from a
+// merely supplied X-SwM-* header. In particular, log queries must not fall
+// back to the enforce=false compatibility behaviour.
+const swmAuthVerifiedContextKey = "swm-auth-verified"
+
 func startNonceCleaner() {
 	nonceCleanOnce.Do(func() {
 		go func() {
@@ -64,6 +70,7 @@ func swmAuthMiddleware() gin.HandlerFunc {
 
 		// 算签名结果，enforce=false 时只记日志不拦截，方便灰度
 		verifyErr := verifySwmSignature(c.Request, secret, conf.MaxSkewSeconds)
+		c.Set(swmAuthVerifiedContextKey, verifyErr == nil)
 
 		user := c.Request.Header.Get("X-SwM-User")
 		isAdminHeader := c.Request.Header.Get("X-SwM-Is-Admin")

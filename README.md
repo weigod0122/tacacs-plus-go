@@ -501,7 +501,7 @@ export APOLLO_NAMESPACE="application"
 export APOLLO_SECRET="your-secret"
 ```
 
-> Cluster 通过 `apollo.yaml` 的 `cluster` 字段或环境变量 `APOLLO_CLUSTER` 指定,默认值为 `default`。
+> Cluster 通过 `cmd/server/apollo.yaml` 的 `cluster` 字段或环境变量 `APOLLO_CLUSTER` 指定,默认值为 `default`。
 
 **Apollo 中的 Key 与配置内容**
 
@@ -830,11 +830,11 @@ APP_ENV=prod CFG_FILE=/etc/tacacs/server.yaml ./scripts/deploy.sh start server
 
 直接调二进制,自己控制 CWD 和环境变量。**配置源 Apollo 优先**:启动时先尝试拉 Apollo 的 `server` / `client` / `swm` Key,Apollo 不可达或 Key 不存在时退到 `-c` 指定的本地 yaml 兜底(Apollo 失败会打 `apollo init failed (will use local config)` 日志,这是预期行为)。
 
-下面三种启动姿势可以单独用,也可以叠加(env 优先级 > `apollo.yaml`;Apollo 优先级 > 本地 cfg)。
+下面三种启动姿势可以单独用,也可以叠加(env 优先级 > `cmd/server/apollo.yaml`;Apollo 优先级 > 本地 cfg)。
 
 **① Apollo + 环境变量(容器 / K8s / CI 推荐)**
 
-镜像里**不放** `apollo.yaml`,通过 env 注入三个必填字段,binary 启动时从环境读出来连 Apollo:
+镜像里**不放** `cmd/server/apollo.yaml`,通过 env 注入三个必填字段,binary 启动时从环境读出来连 Apollo:
 
 ```bash
 export APOLLO_APP_ID="your-app-id"
@@ -850,9 +850,9 @@ export APP_ENV=prod    # 不设则默认 test
 
 Docker 容器走的就是这条路径,见 [`docker/Dockerfile`](docker/Dockerfile) 顶部的 `docker run` 示例。镜像里只有二进制,运行时全靠 env 注入 Apollo 凭据。
 
-**② Apollo + 本地 `apollo.yaml`(固定物理机部署 / 开发机推荐)**
+**② Apollo + 本地 `cmd/server/apollo.yaml`(固定物理机部署 / 开发机推荐)**
 
-把 Apollo 连接信息写进文件,binary 启动时从 **CWD** 下读 `apollo.yaml`:
+把 Apollo 连接信息写进文件,binary 启动时从 **CWD** 下读 `cmd/server/apollo.yaml`:
 
 ```bash
 cp static/cfg/apollo_example.yaml apollo.yaml
@@ -865,7 +865,7 @@ cd /path/where/apollo.yaml/lives
 ./build/<os>_<arch>/swm
 ```
 
-> ⚠️ `apollo.yaml` **已在 `.gitignore`**,含 Apollo Secret,永远不要 commit。env 变量若同时设置会**逐字段覆盖**文件中的对应值,所以可以在 `apollo.yaml` 写测试集群,临时 `APOLLO_IP=http://prod-apollo ... ./server` 一次性切到生产,不用改文件。
+> ⚠️ `cmd/server/apollo.yaml` **已在 `.gitignore`**,含 Apollo Secret,永远不要 commit。env 变量若同时设置会 **逐字段覆盖**文件中的对应值,所以可以在 `cmd/server/apollo.yaml` 写测试集群,临时 `APOLLO_IP=http://prod-apollo ... ./server` 一次性切到生产,不用改文件。
 
 **③ 纯本地 cfg(无 Apollo / 离线 / 临时自测)**
 
@@ -1215,13 +1215,16 @@ flowchart LR
 
 > 🔢 **协议三件套(`client_tac_plus_*.log`)的字段定义**在 `pkg/public/tacplus/struct.go`,典型记账行包含 `time / user / switchAddr / serverAddr / cmd / arg[] / privLvl / authenMethod / isSingleConnect / tacacsClient` 等键,sonic 序列化,小驼峰命名。Client 节点越多、设备越活跃,这个文件增长越快,**优先纳入集中收集**。
 
-### ⚠️ 前端「日志」页:跳转到外部日志系统
+### 🧭 前端「日志」页:外部跳转或 ClickHouse 直查
 
-SwM 下「操作日志」入口(`static/js/pages/log.js`)**不再做内置查询**,而是按 TACACS+ 三类协议日志(认证 / 授权 / 记账)各渲染一个按钮,点击在新 tab(`window.open(url, "_blank", "noopener,noreferrer")`,防 tab-nabbing)打开管理员预先配置的外部日志系统(ELK / Loki / Grafana / ClickHouse / Splunk 任选,SwM 不感知后端实现)。三类可分别投向不同的目的地或同系统的不同视图。
+SwM 下「操作日志」入口(`static/js/pages/log.js`)支持两种展示方式，由管理员在「系统设置」中选择:
 
-每条日志类型的"是否对普通用户开放"**独立可控**——管理员可以只把记账日志开放给所有人,认证 / 授权仅自己可见。
+1. **外部链接跳转**：保留原有认证 / 授权 / 记账三个按钮，点击后在新 tab(`window.open(url, "_blank", "noopener,noreferrer")`,防 tab-nabbing)打开管理员预先配置的日志系统(ELK / Loki / Grafana / Splunk 等)。
+2. **ClickHouse 直查**：Server 只读 loghub 已写入的 `tacacs_authen`、`tacacs_author`、`tacacs_account` 对应表，前端按认证 / 授权 / 记账三个子标签查询。查询固定带事件时间范围，可追加字段、匹配符和值条件，支持分页、每页数量、展示列勾选和拖动排序。Server 使用参数化条件和值绑定生成查询，表名和列名只接受已发现并校验过的标识符。
 
-配置持久化在新表 `tacacs_misc`(`static/sql/tacacs_misc.sql`,通用 K/V 杂项配置表,`id` BIGINT PK + `k` 唯一索引 + `v` VARCHAR(2048) + `description` VARCHAR(255) 自述列),共 6 个 key:
+外部跳转模式下,每条日志类型的"是否对普通用户开放"**独立可控**——管理员可以只把记账日志开放给所有人,认证 / 授权仅自己可见。ClickHouse 直查模式不使用这三个可见性开关:三种日志都展示,管理员可查全部用户,普通用户由 Server 按已验签身份强制限定为自己的记录;普通用户不能提交用户名筛选条件。
+
+配置持久化在 `tacacs_misc`(`static/sql/tacacs_misc.sql`,通用 K/V 杂项配置表,`id` BIGINT PK + `k` 唯一索引 + `v` VARCHAR(2048) + `description` VARCHAR(255) 自述列)。外部跳转仍使用原来的 6 个 key，直查模式新增 5 个 key:
 
 | key                                | 含义                                              |
 | ---------------------------------- | ------------------------------------------------- |
@@ -1231,17 +1234,32 @@ SwM 下「操作日志」入口(`static/js/pages/log.js`)**不再做内置查询
 | `log_redirect_visible_authen`      | `"1"` 普通用户能看到认证日志按钮,否则仅管理员      |
 | `log_redirect_visible_author`      | `"1"` 普通用户能看到授权日志按钮,否则仅管理员      |
 | `log_redirect_visible_account`     | `"1"` 普通用户能看到记账日志按钮,否则仅管理员      |
+| `log_display_mode`                 | `external` 或 `clickhouse`                         |
+| `log_clickhouse_config`            | ClickHouse 地址、用户名、密码、库名(JSON)           |
+| `log_clickhouse_mapping_authen`    | `tacacs_authen` 表与 `AuthenInfo` 字段映射(JSON)   |
+| `log_clickhouse_mapping_author`    | `tacacs_author` 表与 `AuthorInfo` 字段映射(JSON)   |
+| `log_clickhouse_mapping_account`   | `tacacs_account` 表与 `AccountInfo` 字段映射(JSON) |
 
-普通用户侧栏「操作日志」入口的渲染条件:**任意一种类型同时满足 visible=1 且 URL 非空**(只开 visible 但 URL 还没填等中间态不会让用户进到空页);进入页面后,non-admin 只能看到 visible+url 都齐的那几个按钮,admin 永远看到全部 3 个(URL 空的 disable,方便观察哪些没配)。
+外部跳转模式下,普通用户侧栏「操作日志」入口的渲染条件是**任意一种类型同时满足 visible=1 且 URL 非空**;进入页面后,non-admin 只能看到 visible+url 都齐的按钮,admin 永远看到全部 3 个(URL 空的 disable)。ClickHouse 模式下,三种日志子标签都展示,入口按 ClickHouse 配置/映射是否完整决定,不受外部跳转可见性开关影响。
 
 > 💡 `description` 列是给 DBA / 排障的"这一行是干什么用的"自述,**权威源在 Go 代码**(`pkg/public/db/misc.go::MiscDescriptions`)。server 启动时 `db.SyncMiscDescriptions` 把代码里每条说明写入/校正到 DB(行不存在 → 连同 `v=''` 一起 INSERT;行存在但 description 跟代码不一致 → 只 UPDATE description,**绝不动 v**);业务运行期 `db.UpsertMisc` 只动 `v`,从不动 description。新增 key 时只需在 `MiscKey*` 常量 + `MiscDescriptions` map 各加一行,SQL 文件不动 —— 重启 server 即同步到所有环境。
 
-管理员在「系统设置」页可读写,走以下两个 Server 接口(method-aware ACL:GET 对所有已登录用户开放,POST 仅管理员;两层 ACL 在 swm proxy + server middleware 各加一份 `adminWritePrefixes: /tacacs/system/`):
+管理员在「系统设置」页配置 ClickHouse 地址、用户名、密码、库名，点击测试连通性后读取表结构，再为三种日志分别选择表、事件时间列，并把结构体中除 `StartTime` 外的每个 JSON 字段一一映射到不同的 ClickHouse 列。保存时 Server 会再次连库校验三张表、所有列和类型兼容性。密码只用于 Server 连接，不通过响应返回；当前配置与映射复用 `tacacs_misc` 保存。
+
+使用仓库配套 `loghub-for-tacacs` 建表脚本时，三张表的事件时间列应选择 `event_time`（`DateTime64(9, 'UTC')`）。它参与 ClickHouse 的分区/索引裁剪；不要把事件范围列误选成业务字段 `timeStamp`，否则查询可能扫描整张表。
+
+相关 Server 接口(method-aware ACL:系统设置的配置与连通性/表结构接口仅管理员；日志元数据和查询必须经过 SwM HMAC 身份校验,直查查询再由 Server 强制执行普通用户的自身用户范围；两层 ACL 在 swm proxy + server middleware 各加一份):
 
 - `GET /tacacs/system/log-redirect-config` → `{code, data: {authen, author, account, visibleAuthen, visibleAuthor, visibleAccount}}`,未配置项为空串 / false。**对所有已登录用户开放**——前端 bootstrap 时拉一次,普通用户据此决定是否在侧栏渲染「操作日志」入口。
-- `POST /tacacs/system/log-redirect-config` body 同上六字段 → 三个 URL 独立校验(空串合法,非空必须 `http(s)://` 绝对地址),三个 visible* 落库为 `"1"` / `"0"`,全部走 `UpsertMisc` 进 `tacacs_misc`。**仅管理员**(命中 `adminWritePrefixes` 的写入分支)。
+- `POST /tacacs/system/log-redirect-config` body 同上六字段 → 三个 URL 独立校验(空串合法,非空必须 `http(s)://` 绝对地址),三个 visible* 落库为 `"1"` / `"0"`,通过批量 upsert 一次写入 `tacacs_misc`。**仅管理员**(命中 `adminWritePrefixes` 的写入分支)。
+- `GET /tacacs/log/meta` → 返回当前模式、日志类型、字段元数据；必须携带经过 Server 验证的 SwM 身份。
+- `GET /tacacs/system/log-config` → 管理员读取完整配置（不含密码）。
+- `POST /tacacs/system/clickhouse/test` → 管理员测试 ClickHouse 连接。
+- `POST /tacacs/system/clickhouse/schema` → 管理员读取库中的表/列结构。
+- `POST /tacacs/system/log-config` → 管理员保存模式、外部跳转配置和 ClickHouse 映射；ClickHouse 模式保存前必须通过连通性和映射校验。
+- `POST /tacacs/log/query` → 按日志类型、固定事件范围、筛选条件、展示列、页码和每页数量查询；必须携带经过 Server 验证的 SwM 身份。管理员可查询全部用户,普通用户的请求即使不带筛选也会由 Server 追加 `user = 当前登录用户`,显式提交用户名筛选会被拒绝。默认只取当前页并多取一行判断 `hasMore`，避免为每次翻页执行昂贵的全范围 `count()`。响应返回列定义、行、`hasMore` 和 `totalKnown=false`。需要精确总数时显式传 `includeTotal=true`，Server 会并发执行总数统计与当前页查询并返回 `total` / `totalPages`。映射中配置的字段名称会作为结果表头，名称为空时使用不带结构体前缀的字段名。
 
-这样做的好处是把"协议流水的展现"完全下放给专业日志栈 —— 内置接口扛不住单文件、单日、无分页的生产规模,而 ES/Loki 等天然支持分桶、检索、告警。Client 端怎么把日志推到那套系统,见下一节。
+这样做保留了外部日志栈的检索能力，也为已由 loghub 汇聚到 ClickHouse 的场景提供了受控直查入口；Client 端如何把日志推到 loghub 或其他日志系统，见下一节。
 
 ### 🛰️ 推荐做法:Client 侧采集 → 集中存储 → 本地定期清理
 

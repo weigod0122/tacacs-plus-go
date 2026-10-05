@@ -5,7 +5,7 @@
 infra-network-tacacs-application.json
 
 # Apollo connection config (contains secret)
-apollo.yaml
+cmd/server/apollo.yaml
 
 # SwM session key
 session.key

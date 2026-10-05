@@ -24,13 +24,11 @@ var adminOnlyPrefixes = []string{
 	"/tacacs/user/delete",
 	"/tacacs/user/create",
 	"/tacacs/user/clear/",
-	"/tacacs/log/",
 }
 
 // adminWritePrefixes 是"读对所有人开放、写仅管理员"的代理路径前缀。
-// /tacacs/system/log-redirect-config 的 GET 需要给普通用户开放，让前端 bootstrap
-// 时能拿到 visibleAuthen / visibleAuthor / visibleAccount 三个开关决定是否
-// 渲染「操作日志」入口；POST 改配置仍 admin only。
+// /tacacs/system/ 下的配置写操作仍 admin only；操作日志查询由后端按已签名身份
+// 做行级范围校验。
 var adminWritePrefixes = []string{
 	"/tacacs/system/",
 }
@@ -41,6 +39,7 @@ var adminWritePrefixes = []string{
 var adminOnlyExact = map[string]struct{}{
 	"/tacacs/user/reset/password": {},
 	"/tacacs/meta/refresh":        {},
+	"/tacacs/system/log-config":   {},
 }
 
 // ownershipBodyUserPaths 是 body 里有 "user" 字段、非管理员调用时该字段必须 ==

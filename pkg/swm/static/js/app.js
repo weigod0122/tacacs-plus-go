@@ -21,14 +21,9 @@ import renderSystemPage from "./pages/system.js";
 const ctx = {
   username: document.body.dataset.username || "",
   isAdmin: document.body.dataset.isAdmin === "1",
-  // 三种日志类型各自是否对普通用户开放(来自后端 /tacacs/system/log-redirect-config
-  // 的 visibleAuthen / visibleAuthor / visibleAccount 字段)。bootstrap 阶段异步拉取,
-  // 失败时全部默认 false(隐藏入口)。侧栏「操作日志」只要有一项 visible+url 都齐
-  // 就出现,管理员永远可见。
-  logVisibility: { authen: false, author: false, account: false },
-  // 配套的 URL 表(只用于侧栏判断"该类型是否真的可点"——visible=true 但 URL 还
-  // 没填的中间态不应让用户看到入口然后点进去面对空页)。
-  logUrls: { authen: "", author: "", account: "" },
+  // /tacacs/log/meta 返回的安全日志展示元数据。连接密码等管理员配置不会
+  // 出现在这个对象里。
+  logMeta: { mode: "external", external: null, types: [] },
 };
 
 const NAV_ITEMS = [
@@ -40,8 +35,8 @@ const NAV_ITEMS = [
       { id: "role",     labelKey: "nav.role",     icon: "◇", render: renderRolePage },
       { id: "server",   labelKey: "nav.server",   icon: "▤", render: renderServerPage },
       { id: "command",  labelKey: "nav.command",  icon: "›_", render: renderCommandPage },
-      // log 不再无条件 adminOnly:任意一个类型同时打开了 visibleX 开关并配上了 URL,
-      // 普通用户都能看到入口。具体是哪几个按钮可点交给 log.js 二次过滤。
+      // 外部跳转模式按 visibleX + URL 决定入口；ClickHouse 直查模式按映射
+      // 是否可用决定入口，三种日志子标签由 log.js 一并渲染。
       { id: "log",      labelKey: "nav.log",      icon: "≡", render: renderLogPage },
       { id: "system",   labelKey: "nav.system",   icon: "⚙", render: renderSystemPage, adminOnly: true },
     ],
@@ -49,11 +44,16 @@ const NAV_ITEMS = [
 ];
 
 // hasAnyAccessibleLog 判断侧栏是否应该给普通用户展示「操作日志」入口。
-// 任意一种日志类型 visibleX=true 且 URL 非空即返回 true;全部空或全部隐藏则 false。
 function hasAnyAccessibleLog() {
-  return ["authen", "author", "account"].some(
-    (k) => ctx.logVisibility[k] && !!ctx.logUrls[k]
-  );
+  if (ctx.logMeta.mode === "clickhouse") {
+    return Array.isArray(ctx.logMeta.types) && ctx.logMeta.types.some((x) => x.available);
+  }
+  const cfg = ctx.logMeta.external || {};
+  return [
+    [cfg.visibleAuthen, cfg.authen],
+    [cfg.visibleAuthor, cfg.author],
+    [cfg.visibleAccount, cfg.account],
+  ].some(([visible, url]) => !!visible && !!url);
 }
 
 // isNavItemVisible 统一封装侧栏 / 路由注册 / fallback 三处的可见性判定,
@@ -210,21 +210,13 @@ async function bootstrap() {
   const initial = qs("#initial-loading");
   if (initial) initial.textContent = t("app.loading");
 
-  // 先拉一次外部日志跳转配置,拿到三个 visibleX 开关 + 三个 URL 决定普通用户侧栏
-  // 是否展示「操作日志」入口。后端 GET 对所有已登录用户开放;失败时保持默认全 false
-  // (隐藏)。必须 await:buildSidebar/registerRoutes/fallback 都依赖这些值。
+  // 先拉一次安全日志元数据，决定普通用户侧栏是否展示「操作日志」入口。
+  // 失败时普通用户隐藏入口，管理员仍可进入页面查看故障提示。
   try {
-    const res = await api.get("/tacacs/system/log-redirect-config");
-    const cfg = (res && res.data) || {};
-    ctx.logVisibility.authen  = !!cfg.visibleAuthen;
-    ctx.logVisibility.author  = !!cfg.visibleAuthor;
-    ctx.logVisibility.account = !!cfg.visibleAccount;
-    ctx.logUrls.authen  = cfg.authen  || "";
-    ctx.logUrls.author  = cfg.author  || "";
-    ctx.logUrls.account = cfg.account || "";
+    const res = await api.get("/tacacs/log/meta");
+    ctx.logMeta = (res && res.data) || { mode: "external", external: null, types: [] };
   } catch {
-    ctx.logVisibility = { authen: false, author: false, account: false };
-    ctx.logUrls = { authen: "", author: "", account: "" };
+    ctx.logMeta = { mode: "external", external: null, types: [] };
   }
 
   buildSidebar();

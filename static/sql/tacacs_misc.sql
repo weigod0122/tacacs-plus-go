@@ -1,7 +1,7 @@
 -- tacacs_misc:杂项配置 K/V 表
 -- 用途:存储无法独立成表、又无需触发缓存失效的运维参数
---      (当前承载外部日志系统跳转 URL 与可见性开关;未来可承载其他单值/短文本设置)。
--- 行级 schema:每条记录一个 (k, v) 键值对,v 用 VARCHAR(2048) 兜底任意 URL/短文本;
+--      (当前承载外部日志跳转、日志展示方式、ClickHouse 连接与字段映射)。
+-- 行级 schema:每条记录一个 (k, v) 键值对,v 用 VARCHAR(2048) 兜底任意 URL/短 JSON;
 --             description 是给 DBA 看的"这一行是干什么用的"自述。
 --
 -- 权威源:description 由 Go 代码 (pkg/public/db/misc.go::MiscDescriptions) 维护,

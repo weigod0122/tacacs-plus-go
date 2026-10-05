@@ -13,14 +13,13 @@ var adminOnlyPrefixes = []string{
 	"/tacacs/user/delete",
 	"/tacacs/user/create",
 	"/tacacs/user/clear/",
-	"/tacacs/log/",
 }
 
 // adminWritePrefixes 是"读对所有人开放、写仅管理员"的路径前缀。命中此前缀的
 // GET / HEAD / OPTIONS 不挡 ACL；POST / PUT / PATCH / DELETE 仍要 admin。
-// 之前 /tacacs/system/ 在 adminOnlyPrefixes 里挡所有方法，现在改成挡写：
-// 普通用户能 GET /tacacs/system/log-redirect-config 拿可见性开关，从而决定是否
-// 渲染「操作日志」入口；只有管理员能 POST 改这份配置。
+// /tacacs/system/ 下的配置写操作只对管理员开放；日志查询接口不在这里，
+// 由 handler 根据当前模式和已验证身份再次校验；ClickHouse 直查的行级范围
+// 由 handler 强制施加。
 var adminWritePrefixes = []string{
 	"/tacacs/system/",
 }
@@ -28,6 +27,7 @@ var adminWritePrefixes = []string{
 var adminOnlyExact = map[string]struct{}{
 	"/tacacs/user/reset/password": {},
 	"/tacacs/meta/refresh":        {},
+	"/tacacs/system/log-config":   {},
 }
 
 var ownershipBodyUserPaths = map[string]struct{}{

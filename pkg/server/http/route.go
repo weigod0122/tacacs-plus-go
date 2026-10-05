@@ -64,5 +64,15 @@ func configRoutes(app *gin.Engine) {
 	system := app.Group("/tacacs/system")
 	system.GET("/log-redirect-config", httpApiSystemGetLogRedirectConfig)
 	system.POST("/log-redirect-config", httpApiSystemSetLogRedirectConfig)
+	system.GET("/log-config", httpApiSystemGetLogConfig)
+	system.POST("/log-config", httpApiSystemSetLogConfig)
+	system.POST("/clickhouse/test", httpApiSystemClickHouseTest)
+	system.POST("/clickhouse/schema", httpApiSystemClickHouseSchema)
+
+	//操作日志：元数据和 ClickHouse 查询均要求经过 SwM 身份签名校验；直查时
+	//后端再按管理员/当前用户身份做行级范围控制。
+	logs := app.Group("/tacacs/log")
+	logs.GET("/meta", httpApiLogMeta)
+	logs.POST("/query", httpApiLogQuery)
 
 }
