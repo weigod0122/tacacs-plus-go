@@ -19,10 +19,14 @@ import (
 func route(app *gin.Engine, staticFS embed.FS) {
 	gob.Register(time.Time{})
 
-	// 1. 安全 headers 最先生效
+	// 1. Keep request buffering bounded at the public entry point. The Server
+	// has its own limit, but SWM must reject oversized bodies before proxying.
+	app.Use(requestBodyLimitMiddleware())
+
+	// 2. 安全 headers 最先生效
 	app.Use(SecurityHeaders())
 
-	// 2. Session：随机 key + Secure/HttpOnly/SameSite Strict
+	// 3. Session：随机 key + Secure/HttpOnly/SameSite Strict
 	store := cookie.NewStore(loadOrCreateSessionKey())
 	store.Options(sessions.Options{
 		Path:     "/",
@@ -33,7 +37,7 @@ func route(app *gin.Engine, staticFS embed.FS) {
 	})
 	app.Use(sessions.Sessions(sessionName, store))
 
-	// 3. 模板与静态资源（来自编译期嵌入的 staticFS，不再依赖磁盘 ./static/）
+	// 4. 模板与静态资源（来自编译期嵌入的 staticFS，不再依赖磁盘 ./static/）
 	tmpl, err := template.ParseFS(staticFS, "static/*.html")
 	if err != nil {
 		log.Logger.Errorf("parse embedded html templates fail: %v", err)
@@ -59,20 +63,20 @@ func route(app *gin.Engine, staticFS embed.FS) {
 		c.Next()
 	})
 
-	// 4. 公开路由（登录前可达），登录与注册接口加限流
+	// 5. 公开路由（登录前可达），登录与注册接口加限流
 	app.GET("/login", showLoginPage)
 	app.POST("/login", LoginRateLimit(), handleLogin)
 	app.GET("/logout", handleLogout)
 	app.POST("/create-user", LoginRateLimit(), handleCreateUser)
 	app.GET("/check-session", checkSession)
 
-	// 5. 受保护路由：登录态 + CSRF
+	// 6. 受保护路由：登录态 + CSRF
 	authed := app.Group("/")
 	authed.Use(AuthRequired())
 	authed.Use(CSRFProtect())
 	authed.GET("/", Index)
 
-	// 6. /tacacs/* 反向代理：登录态 + 路径 ACL + 身份注入
+	// 7. /tacacs/* 反向代理：登录态 + 路径 ACL + 身份注入
 	proxy, err := newTacacsProxy()
 	if err != nil {
 		log.Logger.Errorf("init tacacs proxy fail: %v", err)

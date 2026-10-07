@@ -21,8 +21,9 @@ import (
 var usernameAllowed = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
 const (
-	sessionName = "user-session"
-	sessionKey  = "authenticated"
+	sessionName       = "user-session"
+	sessionKey        = "authenticated"
+	passwordResetOnly = "password_reset_only"
 
 	maxUsernameLen = 64
 	maxPasswordLen = 128
@@ -32,8 +33,9 @@ const (
 )
 
 type webInfo struct {
-	CurrentUser string
-	IsAdmin     bool
+	CurrentUser       string
+	IsAdmin           bool
+	PasswordResetOnly bool
 }
 
 func Index(c *gin.Context) {
@@ -50,8 +52,9 @@ func Index(c *gin.Context) {
 	}
 
 	c.HTML(http.StatusOK, "index.html", webInfo{
-		CurrentUser: username,
-		IsAdmin:     isAdmin,
+		CurrentUser:       username,
+		IsAdmin:           isAdmin,
+		PasswordResetOnly: sessions.Default(c).Get(passwordResetOnly) == true,
 	})
 }
 
@@ -77,11 +80,22 @@ func handleLogin(c *gin.Context) {
 		"user":     username,
 		"password": password,
 	})
-	if _, err := signedInternalPost(endpoint, body); err != nil {
+	checkBody, err := signedInternalPost(endpoint, body)
+	if err != nil {
 		log.Logger.Errorf("login backend check fail user=%s err=%v", username, err)
 		AuditLog("login-fail user=%s ip=%s", username, c.ClientIP())
 		RecordLoginFailure(c)
 		c.HTML(http.StatusUnauthorized, "login.html", gin.H{"error": "用户名或密码错误"})
+		return
+	}
+	var checkResult struct {
+		Status string `json:"status"`
+	}
+	_ = json.Unmarshal(checkBody, &checkResult)
+	if checkResult.Status != "1" && checkResult.Status != "2" {
+		log.Logger.Errorf("login backend returned unknown user status user=%s status=%q", username, checkResult.Status)
+		c.HTML(http.StatusUnauthorized, "login.html", gin.H{"error": "用户名或密码错误"})
+		RecordLoginFailure(c)
 		return
 	}
 
@@ -89,6 +103,7 @@ func handleLogin(c *gin.Context) {
 	session.Set(sessionKey, true)
 	session.Set("username", username)
 	session.Set("last_access", time.Now())
+	session.Set(passwordResetOnly, checkResult.Status == "2")
 	if err := session.Save(); err != nil {
 		log.Logger.Errorf("session save fail user=%s err=%v", username, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"code": 500, "msg": "无法保存会话"})
@@ -126,7 +141,21 @@ func checkSession(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"expired": true})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"expired": false})
+	if username, ok := session.Get("username").(string); ok && username != "" {
+		status, err := getUserStatus(username)
+		if err != nil || status == "0" {
+			session.Clear()
+			_ = session.Save()
+			c.JSON(http.StatusOK, gin.H{"expired": true})
+			return
+		}
+		session.Set(passwordResetOnly, status == "2")
+		_ = session.Save()
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"expired":           false,
+		"passwordResetOnly": session.Get(passwordResetOnly) == true,
+	})
 }
 
 // AuthRequired 校验会话存在且未过期；同时刷新 last_access 与 CSRF token cookie。
@@ -147,9 +176,50 @@ func AuthRequired() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
+		username, ok := session.Get("username").(string)
+		if !ok || strings.TrimSpace(username) == "" {
+			session.Clear()
+			_ = session.Save()
+			redirectOrJSON(c, "/login", "会话无效")
+			c.Abort()
+			return
+		}
+
+		// Re-check the authoritative account state for every protected request.
+		// This revokes an existing session after an administrator disables the
+		// account, and converts a session to password-reset-only when it pauses.
+		status, err := getUserStatus(username)
+		if err != nil {
+			log.Logger.Errorf("load session user status fail user=%s err=%v", username, err)
+			redirectOrJSON(c, "/login", "账号状态暂时无法确认")
+			c.Abort()
+			return
+		}
+		switch status {
+		case "0":
+			session.Clear()
+			_ = session.Save()
+			redirectOrJSON(c, "/login", "账号已停用")
+			c.Abort()
+			return
+		case "2":
+			session.Set(passwordResetOnly, true)
+			if !passwordResetPathAllowed(c) {
+				redirectOrJSON(c, "/", "请先修改密码")
+				c.Abort()
+				return
+			}
+		case "1":
+			session.Set(passwordResetOnly, false)
+		default:
+			log.Logger.Errorf("unknown session user status user=%s status=%q", username, status)
+			redirectOrJSON(c, "/login", "账号状态无效")
+			c.Abort()
+			return
+		}
 		session.Set("last_access", time.Now())
 		_ = session.Save()
-		c.Set("username", session.Get("username"))
+		c.Set("username", username)
 		EnsureCSRFToken(c)
 		c.Next()
 	}

@@ -118,8 +118,17 @@ func UpdateUserPassword(user, password string) error {
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}
-	updateSql := "UPDATE tacacs_user SET password = ?, password_update_time = ? WHERE user = ?"
-	result, err := DbWrite.Exec(updateSql, passwordHash, now, user)
+	// A paused account (status=2) is the password-expired state.  A successful
+	// self-service password change both updates the credential and restores the
+	// account in one row update, so the TACACS cache never observes a new
+	// password paired with the old paused state.  Disabled accounts (status=0)
+	// are intentionally left unchanged and must go through administrator reset.
+	updateSql := `UPDATE tacacs_user
+		SET password = ?, password_update_time = ?,
+			status = CASE WHEN status = '2' THEN '1' ELSE status END,
+			status_update_time = CASE WHEN status = '2' THEN ? ELSE status_update_time END
+		WHERE user = ?`
+	result, err := DbWrite.Exec(updateSql, passwordHash, now, now, user)
 	if err != nil {
 		log.Logger.Errorf("DB Exec err%v", err)
 		return err

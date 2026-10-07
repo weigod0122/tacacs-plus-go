@@ -24,6 +24,11 @@ var adminOnlyPrefixes = []string{
 	"/tacacs/user/delete",
 	"/tacacs/user/create",
 	"/tacacs/user/clear/",
+	// Template contents contain device addresses and command matchers and are
+	// administrator data. Applicants only receive the role catalogue needed to
+	// submit an approval request.
+	"/tacacs/template/command/",
+	"/tacacs/template/server/",
 }
 
 // adminWritePrefixes 是"读对所有人开放、写仅管理员"的代理路径前缀。
@@ -31,11 +36,10 @@ var adminOnlyPrefixes = []string{
 // 做行级范围校验。
 var adminWritePrefixes = []string{
 	"/tacacs/system/",
+	"/tacacs/template/role/",
 }
 
 // adminOnlyExact 是仅管理员可调用的精确路径。
-// 注：模板（role/server/command）的写操作沿用原前端"任何登录用户均可操作"的语义，
-// 不在此列表；后端 tacacs_manager 自身做最终权限校验。
 var adminOnlyExact = map[string]struct{}{
 	"/tacacs/user/reset/password": {},
 	"/tacacs/meta/refresh":        {},
@@ -173,7 +177,14 @@ func TacacsProxyHandler(proxy *httputil.ReverseProxy) gin.HandlerFunc {
 		// (3) body 级 ACL —— 只对带 body 的方法做
 		if hasBodyMethod(c.Request.Method) {
 			body, err := readAndRestoreBody(c.Request)
-			if err == nil && len(body) > 0 {
+			if err != nil {
+				log.Logger.Errorf("reject oversized or unreadable request body: user=%s path=%s err=%v",
+					username, c.Request.URL.Path, err)
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": http.StatusRequestEntityTooLarge, "msg": "请求体过大或无法读取"})
+				c.Abort()
+				return
+			}
+			if len(body) > 0 {
 				// /tacacs/approval/update：只有 status=0（关闭工单）允许非管理员调
 				if c.Request.URL.Path == approvalUpdatePath {
 					var p struct {
@@ -242,9 +253,8 @@ func hasBodyMethod(m string) bool {
 	return m == http.MethodPost || m == http.MethodPut || m == http.MethodDelete || m == http.MethodPatch
 }
 
-// readAndRestoreBody 读完 body 并把它还原成可重新读取的 ReadCloser，
-// 这样后续 proxy 转发时仍能拿到完整 body。最大读 256KB，超出当作"无法解析"
-// 跳过 body 级检查（让后端兜底），避免内存炸。
+// readAndRestoreBody 读完 body 并把它还原成可重新读取的 ReadCloser。
+// 超过 256KB 返回错误；调用方必须拒绝请求，不能跳过 body ACL 后转发。
 func readAndRestoreBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
@@ -256,8 +266,8 @@ func readAndRestoreBody(r *http.Request) ([]byte, error) {
 	}
 	_ = r.Body.Close()
 	if int64(len(body)) > maxBodyPeek {
-		// 太大就不解析了，原样转给后端，且把 body 还回去
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+		// 保留已读字节供错误处理；请求会被拒绝，绝不能继续转发。
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		return nil, fmt.Errorf("body too large for peek")
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))

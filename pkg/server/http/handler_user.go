@@ -15,11 +15,21 @@ import (
 )
 
 var (
-	updatePasswordErrUser map[string]int8
-	checkPasswordErrUser  map[string]int8
+	// Failed-password counters are process-local lockout hints.  They are
+	// deliberately bounded to a small integer, but still need a mutex because
+	// login and password-change requests run concurrently with the hourly
+	// cleanup goroutines.
+	updatePasswordErrUser = make(map[string]int8)
+	checkPasswordErrUser  = make(map[string]int8)
 )
 
 func httpApiUserGet(c *gin.Context) {
+	username, isAdmin, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
+
 	statusMap := map[string]string{
 		"0": "已停用",
 		"1": "使用中",
@@ -49,6 +59,9 @@ func httpApiUserGet(c *gin.Context) {
 		return
 	}
 	for _, user := range users {
+		if !canReadOwnedRecord(username, user.User, isAdmin) {
+			continue
+		}
 		i := info{
 			User:               user.User,
 			PhoneNumber:        user.PhoneNumber,
@@ -76,10 +89,16 @@ func httpApiUserGet(c *gin.Context) {
 }
 
 func httpApiUserGetAdmin(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	c.JSON(http.StatusOK, db.GetTacacsAdminUser())
 }
 
 func httpApiUserCreate(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 
@@ -158,6 +177,12 @@ func resetUserPassword(user, password string) error {
 }
 
 func httpApiUserResetPassword(c *gin.Context) {
+	// The proxy ACL is the first gate, but keep the privilege check at the
+	// handler boundary as well so a directly signed Server request cannot turn
+	// this recovery endpoint into a general password setter.
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 
@@ -176,6 +201,15 @@ func httpApiUserResetPassword(c *gin.Context) {
 			"code":    http.StatusFailedDependency,
 			"message": fmt.Sprintf("body(%v) convert to struct err: %v", strings.ReplaceAll(string(bodyBytes), "\n", ""), err),
 		})
+		return
+	}
+	operator, _, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
+	if req.Operator != operator {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "operator must match signed identity"})
 		return
 	}
 
@@ -248,7 +282,7 @@ func httpApiUserResetPassword(c *gin.Context) {
 		// A successful administrative reset is an explicit recovery action. Do
 		// not leave the target trapped behind the one-hour failed-login
 		// lockout caused by attempts with the old password.
-		checkPasswordErrUser[req.User] = 0
+		resetCheckPasswordFailure(req.User)
 		code = http.StatusOK
 		message = fmt.Sprintf("%v reset password success by operator %v", req.User, req.Operator)
 	}
@@ -278,8 +312,17 @@ func httpApiUserUpdatePassword(c *gin.Context) {
 		})
 		return
 	}
+	operator, isAdmin, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
+	if !isAdmin && req.User != operator {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "只能修改自己的密码"})
+		return
+	}
 
-	if updatePasswordErrUser[req.User] > 3 {
+	if passwordUpdateFailureCount(req.User) > 3 {
 		c.JSON(http.StatusMethodNotAllowed, gin.H{
 			"code":    http.StatusMethodNotAllowed,
 			"message": fmt.Sprintf("用户(%v)一小时内密码输入错误次数超过3次，请求已拒绝，请一小时后再试", req.User),
@@ -288,11 +331,13 @@ func httpApiUserUpdatePassword(c *gin.Context) {
 	}
 
 	var isExist bool
+	var userStatus string
 	var isOldPasswordPass bool
 	tacacsUserLists, _ := db.GetTacacsUserInfos()
 	for _, tacacsUserInfo := range tacacsUserLists {
 		if tacacsUserInfo.User == req.User {
 			isExist = true
+			userStatus = tacacsUserInfo.Status
 			isOldPasswordPass = utils.CheckPasswordHash(req.OldPassword, tacacsUserInfo.Password)
 			break
 		}
@@ -305,9 +350,18 @@ func httpApiUserUpdatePassword(c *gin.Context) {
 		})
 		return
 	}
+	if userStatus == "0" {
+		// Disabled accounts are recovered through the administrator reset flow;
+		// self-service password changes must not reactivate one.
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    http.StatusForbidden,
+			"message": "账号已停用，请联系管理员恢复",
+		})
+		return
+	}
 
 	if !isOldPasswordPass {
-		updatePasswordErrUser[req.User]++
+		incrementPasswordUpdateFailure(req.User)
 		c.JSON(http.StatusMethodNotAllowed, gin.H{
 			"code":    http.StatusMethodNotAllowed,
 			"message": "原密码校验不通过，请重试",
@@ -325,7 +379,9 @@ func httpApiUserUpdatePassword(c *gin.Context) {
 		code = http.StatusOK
 		message = fmt.Sprintf("%v update password success", req.User)
 	}
-	updatePasswordErrUser[req.User] = 0
+	if code == http.StatusOK {
+		resetPasswordUpdateFailure(req.User)
+	}
 	c.JSON(code, gin.H{
 		"code":    code,
 		"message": message,
@@ -350,6 +406,15 @@ func httpApiUserUpdateNotes(c *gin.Context) {
 			"code":    http.StatusMethodNotAllowed,
 			"message": fmt.Sprintf("body(%v) convert to struct err: %v", strings.ReplaceAll(string(bodyBytes), "\n", ""), err),
 		})
+		return
+	}
+	operator, isAdmin, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
+	if !isAdmin && req.User != operator {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "只能修改自己的备注"})
 		return
 	}
 	var code int
@@ -389,6 +454,15 @@ func httpApiUserUpdateBasicInfo(c *gin.Context) {
 		})
 		return
 	}
+	operator, isAdmin, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
+	if !isAdmin && req.User != operator {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "只能修改自己的基础信息"})
+		return
+	}
 	_, getFeishuUserIdErr := feishu.GetUserIdByBasicInfo(req.Email, req.PhoneNumber)
 	if getFeishuUserIdErr != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -415,6 +489,9 @@ func httpApiUserUpdateBasicInfo(c *gin.Context) {
 }
 
 func httpApiUserDelete(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 
@@ -451,14 +528,14 @@ func httpApiUserDelete(c *gin.Context) {
 
 func updatePasswordErrUserUpdate() {
 	for {
-		updatePasswordErrUser = make(map[string]int8)
+		clearPasswordUpdateFailures()
 		time.Sleep(time.Hour)
 	}
 }
 
 func checkPasswordErrUserUpdate() {
 	for {
-		checkPasswordErrUser = make(map[string]int8)
+		clearCheckPasswordFailures()
 		time.Sleep(time.Hour)
 	}
 }
@@ -475,18 +552,29 @@ func httpApiCheckUser(c *gin.Context) {
 		c.String(http.StatusMethodNotAllowed, "body(%v)格式错误：%v", strings.ReplaceAll(string(bodyBytes), "\n", ""), err)
 		return
 	}
+	operator, isAdmin, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
+	if !isAdmin && req.User != operator {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "只能校验自己的密码"})
+		return
+	}
 
-	if checkPasswordErrUser[req.User] > 3 {
+	if checkPasswordFailureCount(req.User) > 3 {
 		c.String(http.StatusMethodNotAllowed, "用户(%v)一小时内密码输入错误次数超过3次，请求已拒绝，请一小时后再试", req.User)
 		return
 	}
 
 	var isExist bool
 	var isPasswordPass bool
+	var userStatus string
 	tacacsUserLists, _ := db.GetTacacsUserInfos()
 	for _, tacacsUserInfo := range tacacsUserLists {
 		if tacacsUserInfo.User == req.User {
 			isExist = true
+			userStatus = tacacsUserInfo.Status
 			isPasswordPass = utils.CheckPasswordHash(req.Password, tacacsUserInfo.Password)
 			break
 		}
@@ -496,26 +584,41 @@ func httpApiCheckUser(c *gin.Context) {
 		c.String(http.StatusMethodNotAllowed, "用户(%v)不存在", req.User)
 		return
 	}
+	if userStatus != "1" && userStatus != "2" {
+		// SwM translates this non-200 response to the generic login failure
+		// page, so the disabled/unknown state is not disclosed to callers.
+		c.JSON(http.StatusForbidden, gin.H{
+			"code":    http.StatusForbidden,
+			"message": "账号当前不可登录",
+		})
+		return
+	}
 
 	if !isPasswordPass {
-		checkPasswordErrUser[req.User]++
+		incrementCheckPasswordFailure(req.User)
 		c.String(http.StatusMethodNotAllowed, "密码校验不通过，请重试")
 		return
 	}
-	checkPasswordErrUser[req.User] = 0
-	c.String(http.StatusOK, "通过")
+	resetCheckPasswordFailure(req.User)
+	c.JSON(http.StatusOK, gin.H{
+		"code":    http.StatusOK,
+		"status":  userStatus,
+		"message": "通过",
+	})
 }
 
 func httpClearCheckPasswordErrUser(c *gin.Context) {
-	for k := range checkPasswordErrUser {
-		checkPasswordErrUser[k] = 0
+	if !requireAdminIdentity(c) {
+		return
 	}
+	clearCheckPasswordFailures()
 	c.String(http.StatusOK, "完成")
 }
 func httpClearUpdatePasswordErrUser(c *gin.Context) {
-	for k := range updatePasswordErrUser {
-		updatePasswordErrUser[k] = 0
+	if !requireAdminIdentity(c) {
+		return
 	}
+	clearPasswordUpdateFailures()
 	c.String(http.StatusOK, "完成")
 
 }

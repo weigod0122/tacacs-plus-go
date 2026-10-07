@@ -56,6 +56,18 @@ export default async function renderUserPage(container, ctx) {
   function actionsFor(row) {
     // Status values are canonical Chinese strings supplied by the backend;
     // we compare against them directly regardless of UI locale.
+    if (row.Status === "已停用") {
+      // Recovery is deliberately coupled to the administrator reset endpoint:
+      // the backend restores status=1 and writes a fresh password atomically.
+      if (isAdmin && row.User !== username) {
+        return [{
+          label: t("user.btn.restore"),
+          kind: "primary",
+          onClick: () => openResetPasswordModal(row.User),
+        }];
+      }
+      return [];
+    }
     const active = row.Status === "使用中" || row.Status === "暂停使用";
     if (!active) return [];
     const items = [

@@ -24,6 +24,8 @@ var (
 	sharedClient *http.Client
 )
 
+const maxResponseBodyBytes = 4 << 20
+
 // client 返回带连接池的全局共享 *http.Client。
 // 配置 keep-alive、连接复用，避免每次请求新建 TCP 连接。
 func client() *http.Client {
@@ -37,6 +39,7 @@ func client() *http.Client {
 				}).DialContext,
 				MaxIdleConns:          100,
 				MaxIdleConnsPerHost:   20,
+				MaxConnsPerHost:       64,
 				IdleConnTimeout:       90 * time.Second,
 				TLSHandshakeTimeout:   10 * time.Second,
 				ExpectContinueTimeout: 1 * time.Second,
@@ -101,9 +104,15 @@ func request(method, url string, header map[string]string, data []byte, timeout 
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	// External identity/notification APIs should return small JSON payloads.
+	// Limit the response before buffering it so a compromised or misbehaving
+	// dependency cannot make every caller allocate an unbounded byte slice.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBodyBytes+1))
 	if err != nil {
 		return respBody, err
+	}
+	if len(respBody) > maxResponseBodyBytes {
+		return nil, fmt.Errorf("response body exceeds %d bytes", maxResponseBodyBytes)
 	}
 
 	if resp.StatusCode != http.StatusOK {

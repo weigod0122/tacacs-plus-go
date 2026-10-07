@@ -13,6 +13,9 @@ import (
 )
 
 func httpApiTemplateCmdGet(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 	cmdTempLists, err := db.GetTacacsCommandTemplates()
@@ -34,6 +37,9 @@ func httpApiTemplateCmdGet(c *gin.Context) {
 }
 
 func httpApiTemplateCmdAdd(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 	type tempCmdAdd struct {
@@ -112,6 +118,9 @@ func httpApiTemplateCmdAdd(c *gin.Context) {
 }
 
 func httpApiTemplateCmdDelete(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 	type tempCmdDel struct {

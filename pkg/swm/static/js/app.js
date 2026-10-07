@@ -6,7 +6,7 @@ import { startSessionWatch } from "./core/session.js";
 import { toast } from "./core/components/toast.js";
 import { api } from "./core/api.js";
 import { confirm } from "./core/components/confirm.js";
-import { openProfileModal, fetchUserInfo } from "./core/user-actions.js";
+import { openPasswordModal, openProfileModal, fetchUserInfo } from "./core/user-actions.js";
 import { userStatusBadge } from "./core/format.js";
 import { t, getLocale, toggleLocale, onLocaleChange } from "./core/i18n.js";
 
@@ -21,6 +21,7 @@ import renderSystemPage from "./pages/system.js";
 const ctx = {
   username: document.body.dataset.username || "",
   isAdmin: document.body.dataset.isAdmin === "1",
+  passwordResetOnly: document.body.dataset.passwordResetOnly === "1",
   // /tacacs/log/meta 返回的安全日志展示元数据。连接密码等管理员配置不会
   // 出现在这个对象里。
   logMeta: { mode: "external", external: null, types: [] },
@@ -32,9 +33,9 @@ const NAV_ITEMS = [
     items: [
       { id: "approval", labelKey: "nav.approval", icon: "✓", render: renderApprovalPage },
       { id: "user",     labelKey: "nav.user",     icon: "◎", render: renderUserPage, adminOnly: true },
-      { id: "role",     labelKey: "nav.role",     icon: "◇", render: renderRolePage },
-      { id: "server",   labelKey: "nav.server",   icon: "▤", render: renderServerPage },
-      { id: "command",  labelKey: "nav.command",  icon: "›_", render: renderCommandPage },
+      { id: "role",     labelKey: "nav.role",     icon: "◇", render: renderRolePage, adminOnly: true },
+      { id: "server",   labelKey: "nav.server",   icon: "▤", render: renderServerPage, adminOnly: true },
+      { id: "command",  labelKey: "nav.command",  icon: "›_", render: renderCommandPage, adminOnly: true },
       // 外部跳转模式按 visibleX + URL 决定入口；ClickHouse 直查模式按映射
       // 是否可用决定入口，三种日志子标签由 log.js 一并渲染。
       { id: "log",      labelKey: "nav.log",      icon: "≡", render: renderLogPage },
@@ -209,6 +210,31 @@ async function bootstrap() {
   // wrong language between bootstrap and the first render.
   const initial = qs("#initial-loading");
   if (initial) initial.textContent = t("app.loading");
+
+  // Password-expired users get a deliberately minimal session.  Do not load
+  // any catalogue, approval or log data before the password is changed.
+  if (ctx.passwordResetOnly) {
+    const nav = qs("#sidebar-nav");
+    if (nav) mount(nav);
+    const main = qs("#app-main");
+    if (main) {
+      mount(main, h("div", { class: "page" }, [
+        h("header", { class: "page__header" }, [
+          h("div", { class: "page__heading" }, [
+            h("h1", { class: "page__title" }, t("ua.password.title", { user: ctx.username })),
+            h("p", { class: "page__subtitle" }, t("ua.password.resetOnly")),
+          ]),
+        ]),
+      ]));
+    }
+    openPasswordModal(ctx.username, async () => {
+      window.location.href = "/logout";
+    });
+    wireLogout();
+    wireLanguageToggle();
+    startSessionWatch();
+    return;
+  }
 
   // 先拉一次安全日志元数据，决定普通用户侧栏是否展示「操作日志」入口。
   // 失败时普通用户隐藏入口，管理员仍可进入页面查看故障提示。

@@ -1,12 +1,14 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"tacacs/pkg/public/cfg"
 	"tacacs/pkg/public/env"
 	"tacacs/pkg/public/log"
+	"time"
 
 	_ "github.com/go-sql-driver/mysql"
 )
@@ -53,6 +55,7 @@ func initReadWrite() error {
 	}
 	dbR, err := openSql(buildDSN(read))
 	if err != nil {
+		_ = dbW.Close()
 		return err
 	}
 	DbWrite = dbW
@@ -62,20 +65,33 @@ func initReadWrite() error {
 }
 
 func buildDSN(info cfg.DatabaseInfo) string {
-	return fmt.Sprintf("%v:%v@tcp(%v)/%v?loc=Local&parseTime=true",
+	// Bound connect and socket waits so a degraded MySQL endpoint cannot hold
+	// every HTTP handler indefinitely. The application still uses context
+	// cancellation for request-scoped queries; these driver settings cover
+	// connection establishment and operations that do not receive a context.
+	return fmt.Sprintf("%v:%v@tcp(%v)/%v?loc=Local&parseTime=true&timeout=5s&readTimeout=30s&writeTimeout=30s",
 		info.Username, info.Password, info.Address, info.Table)
 }
 
 func openSql(url string) (*sql.DB, error) {
-	var err error
 	db, err := sql.Open("mysql", url)
 	if err != nil {
 		return nil, err
 	}
 
-	db.SetMaxIdleConns(60)
-	err = db.Ping()
+	// Keep the pool bounded. The previous 60 idle connections per pool could
+	// multiply across server replicas and overwhelm MySQL during a reconnect
+	// storm. These limits are deliberately conservative for this API service.
+	db.SetMaxOpenConns(32)
+	db.SetMaxIdleConns(16)
+	db.SetConnMaxLifetime(30 * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	err = db.PingContext(ctx)
 	if err != nil {
+		_ = db.Close()
 		return nil, err
 	}
 

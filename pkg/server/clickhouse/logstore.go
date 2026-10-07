@@ -71,17 +71,22 @@ type QueryResult struct {
 }
 
 type Manager struct {
-	mu       sync.RWMutex
-	conn     *sql.DB
-	config   db.ClickHouseLogConfig
-	schemaMu sync.RWMutex
-	schemas  map[logquery.LogType]TableSchema
+	mu           sync.RWMutex
+	conn         *sql.DB
+	config       db.ClickHouseLogConfig
+	schemaMu     sync.RWMutex
+	schemas      map[logquery.LogType]TableSchema
+	querySem     chan struct{}
+	querySemOnce sync.Once
 }
 
 var DefaultManager = NewManager()
 
 func NewManager() *Manager {
-	return &Manager{schemas: make(map[logquery.LogType]TableSchema)}
+	return &Manager{
+		schemas:  make(map[logquery.LogType]TableSchema),
+		querySem: make(chan struct{}, 4),
+	}
 }
 
 func (m *Manager) TestConnection(ctx context.Context, cfg db.ClickHouseLogConfig) error {
@@ -142,6 +147,9 @@ func (m *Manager) Discover(ctx context.Context, cfg db.ClickHouseLogConfig) ([]T
 }
 
 func (m *Manager) Query(ctx context.Context, req QueryRequest) (QueryResult, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if req.Page <= 0 {
 		req.Page = 1
 	}
@@ -154,11 +162,29 @@ func (m *Manager) Query(ctx context.Context, req QueryRequest) (QueryResult, err
 	if req.PageSize > 200 {
 		req.PageSize = 200
 	}
+	if req.Page > 100000 {
+		return QueryResult{}, errors.New("page is too large")
+	}
 	if req.To.IsZero() || req.From.IsZero() || !req.From.Before(req.To) {
 		return QueryResult{}, errors.New("event range must be non-empty and from must be before to")
 	}
+	if req.To.Sub(req.From) > 31*24*time.Hour {
+		return QueryResult{}, errors.New("event range cannot exceed 31 days")
+	}
 	if len(req.Filters) > 20 {
 		return QueryResult{}, errors.New("too many filters")
+	}
+	if len(req.Columns) > 64 {
+		return QueryResult{}, errors.New("too many result columns")
+	}
+	// Keep Manager values constructed as literals safe for callers outside
+	// this package and for older tests.
+	m.querySemOnce.Do(func() { m.querySem = make(chan struct{}, 4) })
+	select {
+	case m.querySem <- struct{}{}:
+		defer func() { <-m.querySem }()
+	case <-ctx.Done():
+		return QueryResult{}, ctx.Err()
 	}
 
 	if err := m.ensureLoaded(ctx); err != nil {
@@ -235,7 +261,7 @@ func (m *Manager) Query(ctx context.Context, req QueryRequest) (QueryResult, err
 	var total uint64
 
 	offset := (req.Page - 1) * req.PageSize
-	if offset < 0 {
+	if offset < 0 || offset > 100000 {
 		return QueryResult{}, errors.New("page is too large")
 	}
 	selectParts := make([]string, 0, len(selected))
