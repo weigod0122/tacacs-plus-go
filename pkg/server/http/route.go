@@ -16,6 +16,10 @@ func configRoutes(app *gin.Engine) {
 
 	//系统健康检查
 	app.GET("/health", httpApiHealth)
+	// Internal SwM-only identity lookup.  It is outside /tacacs, so the
+	// browser reverse proxy cannot expose it as a user-facing API; the global
+	// HMAC middleware still authenticates the signed SwM request.
+	app.GET("/internal/user/status/:user", httpInternalUserStatus)
 
 	//用户管理接口(不包含角色设置，只有基础信息：用户名、密码、备注)
 	user := app.Group("/tacacs/user")

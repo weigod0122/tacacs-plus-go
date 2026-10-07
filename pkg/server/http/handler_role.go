@@ -16,7 +16,17 @@ import (
 func httpApiRoleGet(c *gin.Context) {
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
+	_, isAdmin, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
 	roleTemplate := db.GetTacacsRoleTemplate()
+	if !isAdmin {
+		// Applicants need the role names to submit a request, but do not need
+		// the internal server-template and command-template mappings.
+		roleTemplate = publicRoleRows(roleTemplate)
+	}
 	resp := struct {
 		Code int                     `json:"code"`
 		Data []db.TacacsRoleTemplate `json:"data"`
@@ -28,6 +38,9 @@ func httpApiRoleGet(c *gin.Context) {
 }
 
 func httpApiRoleCreate(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 	type tempRoleAdd struct {
@@ -101,6 +114,9 @@ func httpApiRoleCreate(c *gin.Context) {
 }
 
 func httpApiRoleDelete(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 	type tempRoleAdd struct {

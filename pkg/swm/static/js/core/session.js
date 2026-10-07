@@ -32,6 +32,12 @@ async function tick() {
       setTimeout(() => { window.location.href = "/login"; }, 1200);
       return;
     }
+    if (res && res.passwordResetOnly && document.body.dataset.passwordResetOnly !== "1") {
+      // The account may have been paused while this tab was open. Reload so
+      // the server renders the restricted password-reset-only experience.
+      window.location.reload();
+      return;
+    }
   } catch {
     // ignored — api.js already handles 401
   }

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -132,6 +133,10 @@ func httpApiLogQuery(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": fmt.Sprintf("invalid body: %v", err)})
 		return
 	}
+	if len(body.Filters) > 20 || len(body.Columns) > 64 {
+		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "query contains too many filters or columns"})
+		return
+	}
 	typ, err := logquery.ParseLogType(body.Type)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": err.Error()})
@@ -162,7 +167,9 @@ func httpApiLogQuery(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"code": http.StatusBadRequest, "message": "invalid eventRange.to: " + err.Error()})
 		return
 	}
-	result, err := clickhouse.DefaultManager.Query(c.Request.Context(), clickhouse.QueryRequest{
+	queryCtx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+	defer cancel()
+	result, err := clickhouse.DefaultManager.Query(queryCtx, clickhouse.QueryRequest{
 		Type:         typ,
 		From:         from,
 		To:           to,

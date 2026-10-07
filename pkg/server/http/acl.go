@@ -13,6 +13,10 @@ var adminOnlyPrefixes = []string{
 	"/tacacs/user/delete",
 	"/tacacs/user/create",
 	"/tacacs/user/clear/",
+	// Template contents contain device addresses and command matchers. They
+	// are administrator data, not a public permission catalogue.
+	"/tacacs/template/command/",
+	"/tacacs/template/server/",
 }
 
 // adminWritePrefixes 是"读对所有人开放、写仅管理员"的路径前缀。命中此前缀的
@@ -22,6 +26,7 @@ var adminOnlyPrefixes = []string{
 // 由 handler 强制施加。
 var adminWritePrefixes = []string{
 	"/tacacs/system/",
+	"/tacacs/template/role/",
 }
 
 var adminOnlyExact = map[string]struct{}{
@@ -66,8 +71,9 @@ func hasBodyMethod(m string) bool {
 	return m == http.MethodPost || m == http.MethodPut || m == http.MethodDelete || m == http.MethodPatch
 }
 
-// readAndRestoreBody 读完 body 并把它还原成可重新读取的 ReadCloser，超过 maxBodyPeek
-// 返回 nil（让后端兜底校验），避免内存炸。
+// readAndRestoreBody 读完 body 并把它还原成可重新读取的 ReadCloser。
+// 超过 maxBodyPeek 的请求返回错误；调用方必须拒绝请求，不能在未完成
+// body ACL 的情况下继续转发。
 func readAndRestoreBody(r *http.Request) ([]byte, error) {
 	if r.Body == nil {
 		return nil, nil
@@ -79,7 +85,9 @@ func readAndRestoreBody(r *http.Request) ([]byte, error) {
 	}
 	_ = r.Body.Close()
 	if int64(len(body)) > maxBodyPeek {
-		r.Body = io.NopCloser(io.MultiReader(bytes.NewReader(body), r.Body))
+		// Keep the bytes read so callers can safely emit a bounded error response.
+		// The request is rejected by the middleware; it must never be forwarded.
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		return nil, fmt.Errorf("body too large for peek")
 	}
 	r.Body = io.NopCloser(bytes.NewReader(body))

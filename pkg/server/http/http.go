@@ -28,14 +28,25 @@ func Start(AddrPort string) {
 	addrPort = AddrPort
 
 	app := gin.New()
+	// Server is called by SwM over a trusted internal hop.  Ignore forwarded
+	// headers unless a deployment explicitly adds trusted proxy CIDRs; this
+	// keeps the IP whitelist from being bypassed with a forged X-Forwarded-For.
+	if err := app.SetTrustedProxies(nil); err != nil {
+		log.Logger.Errorf("disable trusted proxies: %v", err)
+		os.Exit(1)
+	}
 
 	app.Use(bodyLimitMiddleware(), httpApiLog(), gin.Recovery())
 
 	configRoutes(app)
 
 	srv = &http.Server{
-		Addr:    AddrPort,
-		Handler: app,
+		Addr:              AddrPort,
+		Handler:           app,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	go func() {
 		// listener 失败时直接退出进程,而不是 silent log。

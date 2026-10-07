@@ -48,6 +48,15 @@ func Start(AddrPort string, staticFS embed.FS) {
 
 	gin.SetMode(gin.ReleaseMode)
 	app := gin.New()
+	// Do not trust client-controlled X-Forwarded-For by default.  The public
+	// load balancer may still terminate TLS in front of SwM, but trusting its
+	// address must be an explicit deployment decision rather than Gin's
+	// permissive default; rate limits and audit records otherwise use spoofed
+	// source addresses.
+	if err := app.SetTrustedProxies(nil); err != nil {
+		log.Logger.Errorf("disable trusted proxies: %v", err)
+		os.Exit(1)
+	}
 	app.Use(gin.Recovery())
 
 	route(app, staticFS)

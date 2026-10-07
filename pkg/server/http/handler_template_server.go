@@ -13,6 +13,9 @@ import (
 )
 
 func httpApiTemplateServerGet(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 	serverTemplate, err := db.GetTacacsServerTemplates()
@@ -35,6 +38,9 @@ func httpApiTemplateServerGet(c *gin.Context) {
 }
 
 func httpApiTemplateServerAdd(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 	type tempSerAdd struct {
@@ -132,6 +138,9 @@ func httpApiTemplateServerAdd(c *gin.Context) {
 }
 
 func httpApiTemplateServerDelete(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 	type tempServerDel struct {

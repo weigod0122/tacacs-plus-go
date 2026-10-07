@@ -80,6 +80,9 @@ func httpApiSystemGetLogRedirectConfig(c *gin.Context) {
 // 三个 URL 都允许空串(视为该协议未配置,前端按钮 disable);非空时必须是 http(s):// 绝对地址。
 // 三个 Visible* 独立落库为 "1" / "0",对应类型按钮是否对普通用户可见。
 func httpApiSystemSetLogRedirectConfig(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 
@@ -147,6 +150,9 @@ func httpApiSystemGetLogConfig(c *gin.Context) {
 }
 
 func httpApiSystemSetLogConfig(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 
@@ -193,6 +199,9 @@ func httpApiSystemSetLogConfig(c *gin.Context) {
 }
 
 func httpApiSystemClickHouseTest(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 
@@ -214,6 +223,9 @@ func httpApiSystemClickHouseTest(c *gin.Context) {
 }
 
 func httpApiSystemClickHouseSchema(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 

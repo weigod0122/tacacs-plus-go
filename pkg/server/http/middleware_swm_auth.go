@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"tacacs/pkg/public/cfg"
 	"tacacs/pkg/public/log"
 	"time"
@@ -26,9 +27,15 @@ var swmAuthExemptPaths = map[string]struct{}{
 var (
 	nonceStore     sync.Map
 	nonceCleanOnce sync.Once
+	nonceMu        sync.Mutex
+	nonceCount     atomic.Int64
 )
 
-const nonceTTL = 600 * time.Second
+const (
+	nonceTTL       = 600 * time.Second
+	maxNonceLength = 128
+	maxNonceCount  = 100000
+)
 
 // swmAuthVerifiedContextKey is set for every non-exempt request so handlers
 // that return user-scoped data can distinguish a signed identity from a
@@ -43,12 +50,16 @@ func startNonceCleaner() {
 			defer ticker.Stop()
 			for range ticker.C {
 				now := time.Now().Unix()
+				nonceMu.Lock()
 				nonceStore.Range(func(k, v any) bool {
 					if exp, ok := v.(int64); ok && exp <= now {
-						nonceStore.Delete(k)
+						if _, loaded := nonceStore.LoadAndDelete(k); loaded {
+							nonceCount.Add(-1)
+						}
 					}
 					return true
 				})
+				nonceMu.Unlock()
 			}
 		}()
 	})
@@ -59,6 +70,7 @@ func swmAuthMiddleware() gin.HandlerFunc {
 
 	return func(c *gin.Context) {
 		path := c.Request.URL.Path
+		started := time.Now()
 
 		if _, ok := swmAuthExemptPaths[path]; ok {
 			c.Next()
@@ -114,6 +126,12 @@ func swmAuthMiddleware() gin.HandlerFunc {
 
 		if hasBodyMethod(c.Request.Method) {
 			body, err := readAndRestoreBody(c.Request)
+			if err != nil {
+				AuditLog("forbidden user=%s path=%s reason=body-read-failed err=%v", user, path, err)
+				c.JSON(http.StatusRequestEntityTooLarge, gin.H{"code": http.StatusRequestEntityTooLarge, "msg": "request body too large or unreadable"})
+				c.Abort()
+				return
+			}
 			if err == nil && len(body) > 0 {
 				if path == approvalUpdatePath {
 					var p struct {
@@ -149,6 +167,12 @@ func swmAuthMiddleware() gin.HandlerFunc {
 		}
 
 		c.Next()
+		if hasBodyMethod(c.Request.Method) && strings.HasPrefix(path, "/tacacs/") {
+			// Record the verified operator and outcome without serializing the
+			// request body (which may contain passwords or other secrets).
+			AuditLog("api-action user=%s admin=%t method=%s path=%s status=%d latency=%s",
+				user, isAdmin, c.Request.Method, path, c.Writer.Status(), time.Since(started))
+		}
 	}
 }
 
@@ -180,8 +204,8 @@ func verifySwmSignature(r *http.Request, secret string, maxSkewSeconds int) erro
 		return errStaleTimestamp
 	}
 
-	if _, dup := nonceStore.LoadOrStore(nonce, now+int64(nonceTTL/time.Second)); dup {
-		return errReplayedNonce
+	if len(nonce) == 0 || len(nonce) > maxNonceLength {
+		return errBadHeaderFormat
 	}
 
 	body, err := readAndRestoreBody(r)
@@ -207,7 +231,42 @@ func verifySwmSignature(r *http.Request, secret string, maxSkewSeconds int) erro
 	if !hmac.Equal([]byte(expected), []byte(sig)) {
 		return errBadSignature
 	}
+
+	// Only consume nonce capacity after the HMAC is valid. Previously an
+	// unauthenticated caller could fill the replay map with unique nonce values
+	// during the timestamp window. Keep a hard bound so valid traffic cannot
+	// exhaust process memory either.
+	nonceMu.Lock()
+	if nonceCount.Load() >= maxNonceCount {
+		nowUnix := time.Now().Unix()
+		nonceStore.Range(func(k, v any) bool {
+			if exp, ok := v.(int64); ok && exp <= nowUnix {
+				if _, loaded := nonceStore.LoadAndDelete(k); loaded {
+					nonceCount.Add(-1)
+				}
+			}
+			return true
+		})
+	}
+	if nonceCount.Load() >= maxNonceCount {
+		nonceMu.Unlock()
+		return errNonceStoreFull
+	}
+	if _, dup := nonceStore.LoadOrStore(nonce, now+int64(nonceTTLForSkew(maxSkewSeconds)/time.Second)); dup {
+		nonceMu.Unlock()
+		return errReplayedNonce
+	}
+	nonceCount.Add(1)
+	nonceMu.Unlock()
 	return nil
+}
+
+func nonceTTLForSkew(maxSkewSeconds int) time.Duration {
+	ttl := nonceTTL
+	if maxSkewSeconds > 0 && time.Duration(maxSkewSeconds)*time.Second > ttl {
+		ttl = time.Duration(maxSkewSeconds)*time.Second + time.Minute
+	}
+	return ttl
 }
 
 func parseSwmSigHeader(h string) (ts, nonce, sig string, err error) {
@@ -244,6 +303,7 @@ var (
 	errBadTimestamp     = &swmAuthErr{msg: "bad timestamp"}
 	errStaleTimestamp   = &swmAuthErr{msg: "stale timestamp"}
 	errReplayedNonce    = &swmAuthErr{msg: "replayed nonce"}
+	errNonceStoreFull   = &swmAuthErr{msg: "nonce store is full"}
 	errBadSignature     = &swmAuthErr{msg: "signature mismatch"}
 )
 

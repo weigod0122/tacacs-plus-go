@@ -163,6 +163,7 @@ const dict = {
     "user.btn.password": "改密码",
     "user.btn.notes":    "改备注",
     "user.btn.reset":    "重置密码",
+    "user.btn.restore":  "恢复并重置",
     "user.btn.disable":  "停用",
     "user.empty.admin":  "暂无用户",
     "user.empty.user":   "尚未为你创建账号",
@@ -385,6 +386,7 @@ const dict = {
 
     // ---- User actions modals ----
     "ua.password.title": "修改密码 · {user}",
+    "ua.password.resetOnly": "账号已暂停，请先修改密码，修改成功后重新登录。",
     "ua.password.old":   "旧密码",
     "ua.password.new":   "新密码",
     "ua.password.confirm": "确认新密码",
@@ -622,6 +624,7 @@ const dict = {
     "user.btn.password": "Change password",
     "user.btn.notes":    "Edit notes",
     "user.btn.reset":    "Reset password",
+    "user.btn.restore":  "Restore and reset",
     "user.btn.disable":  "Disable",
     "user.empty.admin":  "No users yet",
     "user.empty.user":   "No account has been created for you",
@@ -836,6 +839,7 @@ const dict = {
     "system.logConfig.testRequired":  "Test the connection before saving ClickHouse mode",
 
     "ua.password.title": "Change password · {user}",
+    "ua.password.resetOnly": "This account is paused. Change the password and sign in again.",
     "ua.password.old":   "Current password",
     "ua.password.new":   "New password",
     "ua.password.confirm": "Confirm new password",

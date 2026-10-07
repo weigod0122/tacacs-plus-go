@@ -39,6 +39,15 @@ func httpApiApprovalCreate(c *gin.Context) {
 		})
 		return
 	}
+	operator, isAdmin, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
+	if !isAdmin && req.User != operator {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "只能为自己提交审批"})
+		return
+	}
 
 	tacacsUsers := db.GetTacacsUser()
 	if !utils.IsValueInList(req.User, tacacsUsers) {
@@ -160,6 +169,14 @@ func httpApiApprovalCreate(c *gin.Context) {
 			return
 		}
 	}
+	if !allowApprovalCreate(req.User, time.Now()) {
+		AuditLog("approval-create-throttle user=%s operator=%s", req.User, operator)
+		c.JSON(http.StatusTooManyRequests, gin.H{
+			"code":    http.StatusTooManyRequests,
+			"message": "审批申请过于频繁，请稍后再试",
+		})
+		return
+	}
 
 	t := db.TacacsApproval{
 		CreateTime:          time.Now(),
@@ -194,6 +211,12 @@ func httpApiApprovalGet(c *gin.Context) {
 	waitGroup.GlobalWg.Add(1)
 	defer waitGroup.GlobalWg.Done()
 
+	username, isAdmin, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
+
 	data, err := db.GetTacacsApproval(approvalSystem.ApprovalAll)
 	if err != nil {
 		c.JSON(http.StatusFailedDependency, gin.H{
@@ -206,6 +229,7 @@ func httpApiApprovalGet(c *gin.Context) {
 	sort.Slice(data, func(i, j int) bool {
 		return data[i].CreateTime.After(data[j].CreateTime)
 	})
+	data = filterApprovalRowsForUser(data, username, isAdmin)
 
 	resp := struct {
 		Code int                  `json:"code"`
@@ -244,11 +268,29 @@ func httpApiApprovalUpdate(c *gin.Context) {
 		return
 	}
 
-	// 操作者从 SwM 注入的可信头取（PR1 中间件验签后才会到这里）。撤回时该头是申请
-	// 人本人；通过/拒绝时是 admin。空值兜底成 "system"，避免数据库写 NULL。
-	operator := c.GetHeader("X-SwM-User")
-	if operator == "" {
-		operator = "system"
+	// 操作者必须来自经过 HMAC 校验的 SwM 身份。撤回时必须是工单申请人；
+	// 通过/拒绝时必须是管理员。该校验在 handler 再做一次，避免只依赖代理层。
+	operator, isAdmin, verified := requireVerifiedIdentity(c)
+	if !verified {
+		c.JSON(http.StatusUnauthorized, gin.H{"code": http.StatusUnauthorized, "message": "missing verified identity"})
+		return
+	}
+	if !isAdmin && req.Status != approvalStatusClose {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "无权审批工单"})
+		return
+	}
+	approval, err := db.GetTacacsApprovalByID(req.Id)
+	if err != nil {
+		c.JSON(http.StatusFailedDependency, gin.H{"code": http.StatusFailedDependency, "message": fmt.Sprintf("查询审批工单失败, err: %v", err)})
+		return
+	}
+	if approval == nil {
+		c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": fmt.Sprintf("Mission(id:%v) not found", req.Id)})
+		return
+	}
+	if !isAdmin && approval.User != operator {
+		c.JSON(http.StatusForbidden, gin.H{"code": http.StatusForbidden, "message": "只能关闭自己的审批工单"})
+		return
 	}
 
 	// 用乐观锁更新（仅 status=3 才会改写）。RowsAffected=0 时表示工单不存在、

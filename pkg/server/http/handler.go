@@ -32,6 +32,9 @@ func httpApiHealth(c *gin.Context) {
 // 无视触发器开关与是否真有数据变更，强制让 client 在下一次 2s 轮询时全量重建。
 // 适用场景：DBA 绕过 server 直接改了 DB，需要立刻让缓存生效（否则要等 5min 兜底）。
 func httpApiMetaRefresh(c *gin.Context) {
+	if !requireAdminIdentity(c) {
+		return
+	}
 	if err := db.RefreshAllMeta(); err != nil {
 		c.JSON(http.StatusFailedDependency, gin.H{
 			"code":    http.StatusFailedDependency,
