@@ -76,7 +76,7 @@ export default async function renderLogPage(container, ctx) {
     const filtersHost = h("div", { class: "stack" });
     const columnsHost = h("div", { class: "stack" });
     const tableHost = h("div");
-    const pagerHost = h("div", { class: "page__actions", style: { justifyContent: "space-between" } });
+    const pagerHost = h("div", { class: "page__actions", style: { justifyContent: "flex-end", gap: "var(--space-3)", flexWrap: "nowrap" } });
     const fromInput = h("input", { class: "input", type: "datetime-local", step: "1" });
     const toInput = h("input", { class: "input", type: "datetime-local", step: "1" });
     const queryBtn = h("button", { class: "btn btn--primary", type: "button" }, t("log.btn.query"));
@@ -320,7 +320,7 @@ export default async function renderLogPage(container, ctx) {
       const pageLabel = totalKnown && totalPages
         ? `${result.page} / ${totalPages}`
         : t("log.ck.page", { n: result.page || state.page });
-      const pageSize = h("select", { class: "select" }, [10, 20, 50, 100, 200].map((n) =>
+      const pageSize = h("select", { class: "select", style: { width: "auto" } }, [10, 20, 50, 100, 200].map((n) =>
         h("option", { value: String(n), selected: n === state.pageSize }, String(n))));
       pageSize.value = String(state.pageSize);
       pageSize.addEventListener("change", () => { state.pageSize = Number(pageSize.value) || 50; state.page = 1; load(); });
@@ -330,8 +330,11 @@ export default async function renderLogPage(container, ctx) {
       const totalLabel = totalKnown ? h("span", { class: "page__subtitle" }, t("log.ck.total", { n: result.total || 0 })) : null;
       mount(pagerHost, [
         totalLabel,
-        h("span", { class: "page__subtitle" }, pageLabel), prev,
-        h("label", { class: "toolbar", style: { margin: 0 } }, [h("span", { class: "field__label" }, t("log.ck.pageSize")), pageSize]),
+        h("label", { style: { display: "inline-flex", alignItems: "center", gap: "var(--space-2)", whiteSpace: "nowrap" } }, [
+          h("span", { class: "field__label" }, t("log.ck.pageSize")), pageSize,
+        ]),
+        prev,
+        h("span", { class: "page__subtitle", style: { whiteSpace: "nowrap" } }, pageLabel),
         next,
       ]);
     }

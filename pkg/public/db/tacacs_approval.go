@@ -46,7 +46,7 @@ func scanApproval(row interface {
 func GetTacacsApproval(status int) ([]*TacacsApproval, error) {
 	var selectSql string
 	switch status {
-	case 0, 1, 2, 3, 4:
+	case 0, 1, 2, 3, 4, 6:
 		selectSql = fmt.Sprintf("SELECT %s FROM tacacs_approval WHERE status = %v", approvalSelectColumns, status)
 	case 5:
 		selectSql = fmt.Sprintf("SELECT %s FROM tacacs_approval", approvalSelectColumns)

@@ -5,7 +5,7 @@ CREATE TABLE `tacacs_approval` (
     `approval_permissions` varchar(50) NOT NULL,
     `start_time` datetime NOT NULL,
     `end_time` datetime NOT NULL,
-    `status` int NOT NULL COMMENT '4=通过；3=审批中；2=审批不通过；1=工单超时关闭；0=工单手动关闭',
+    `status` int NOT NULL COMMENT '6=到期关闭；4=通过（生效中）；3=审批中；2=审批不通过；1=工单超时关闭；0=工单手动关闭',
     `approver` varchar(30) DEFAULT NULL COMMENT '审批人（status=2/4 时记录）',
     `approve_time` datetime DEFAULT NULL COMMENT '审批时间',
     PRIMARY KEY (`id`),

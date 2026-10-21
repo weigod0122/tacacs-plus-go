@@ -34,6 +34,7 @@
   /* Approval status palette (0/1/2/3/4) */
   --status-closed-bg: #f1f5f9;     --status-closed-fg: #64748b;
   --status-timeout-bg: #f1f5f9;    --status-timeout-fg: #64748b;
+  --status-expired-bg: #f1f5f9;    --status-expired-fg: #64748b;
   --status-rejected-bg: #fef2f2;   --status-rejected-fg: #b91c1c;
   --status-pending-bg: #fffbeb;    --status-pending-fg: #b45309;
   --status-approved-bg: #ecfdf5;   --status-approved-fg: #047857;

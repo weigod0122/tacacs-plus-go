@@ -69,7 +69,9 @@ const dict = {
     "status.approval.1": "超时关闭",
     "status.approval.2": "审批不通过",
     "status.approval.3": "审批中",
-    "status.approval.4": "通过",
+    "status.approval.4": "生效中",
+    "status.approval.4.notStarted": "待生效",
+    "status.approval.6": "到期关闭",
 
     "status.user.active":   "使用中",
     "status.user.paused":   "暂停使用",
@@ -532,7 +534,9 @@ const dict = {
     "status.approval.1": "Closed (timeout)",
     "status.approval.2": "Rejected",
     "status.approval.3": "Pending",
-    "status.approval.4": "Approved",
+    "status.approval.4": "Active",
+    "status.approval.4.notStarted": "Not started",
+    "status.approval.6": "Expired",
 
     "status.user.active":   "Active",
     "status.user.paused":   "Paused",

@@ -11,10 +11,19 @@ const APPROVAL_STATUS = {
   2: { key: "status.approval.2", className: "badge--rejected" },
   3: { key: "status.approval.3", className: "badge--pending" },
   4: { key: "status.approval.4", className: "badge--approved" },
+  6: { key: "status.approval.6", className: "badge--expired" },
 };
 
-export function approvalStatusBadge(value) {
-  const meta = APPROVAL_STATUS[value];
+// 状态 4 在数据库里从审批通过起就是 4，权限实际是否生效由 server 在登录时按
+// StartTime/EndTime 判断。展示层据此区分"待生效"和"生效中"，状态值本身不变。
+const APPROVAL_NOT_STARTED = { key: "status.approval.4.notStarted", className: "badge--pending" };
+
+export function approvalStatusBadge(value, row) {
+  let meta = APPROVAL_STATUS[value];
+  if (value === 4 && row && row.StartTime) {
+    const start = new Date(String(row.StartTime).replace(" ", "T"));
+    if (!isNaN(start) && start.getTime() > Date.now()) meta = APPROVAL_NOT_STARTED;
+  }
   const label = meta ? t(meta.key) : String(value);
   const cls = meta ? meta.className : "";
   return h("span", { class: ["badge", cls] }, label);

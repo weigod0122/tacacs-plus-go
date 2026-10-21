@@ -10,8 +10,9 @@ import (
 )
 
 const (
+	ExpiredShutdown               = 6     //到期关闭（审批通过的工单过了 EndTime 后由守护任务回收）
 	ApprovalAll                   = 5     //
-	ApprovalPass                  = 4     //审批通过
+	ApprovalPass                  = 4     //审批通过（生效中）
 	ApprovalUnderReview           = 3     //审批中
 	ApprovalFailed                = 2     //审批不通过
 	TimeoutShutdown               = 1     //超时关闭
@@ -82,11 +83,11 @@ func checkPermissionTimeout() {
 		now := time.Now()
 		duration := now.Sub(mission.EndTime)
 		if duration.Seconds() > 1 {
-			_ = db.UpdateTacacsApprovalStatus(mission.ID, ManualShutdown)
+			_ = db.UpdateTacacsApprovalStatus(mission.ID, ExpiredShutdown)
 			if err := feishu.SendCardToPersonByTacacsUserName([]string{mission.User}, feishu.BuildApprovalLifecycleCard(mission, "expired", 0)); err != nil {
 				log.Logger.Errorf("send expired card to %v err: %v", mission.User, err)
 			}
-			log.Logger.Infof("missionID(%v) permission timeout, status change to ManualShutdown", mission.ID)
+			log.Logger.Infof("missionID(%v) permission timeout, status change to ExpiredShutdown", mission.ID)
 		}
 	}
 }

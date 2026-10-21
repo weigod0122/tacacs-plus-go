@@ -226,6 +226,7 @@
 }
 .badge--closed   { background: var(--status-closed-bg);   color: var(--status-closed-fg); }
 .badge--timeout  { background: var(--status-timeout-bg);  color: var(--status-timeout-fg); }
+.badge--expired  { background: var(--status-expired-bg);  color: var(--status-expired-fg); }
 .badge--rejected { background: var(--status-rejected-bg); color: var(--status-rejected-fg); }
 .badge--pending  { background: var(--status-pending-bg);  color: var(--status-pending-fg); }
 .badge--approved { background: var(--status-approved-bg); color: var(--status-approved-fg); }
