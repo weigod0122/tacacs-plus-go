@@ -152,19 +152,30 @@ export default async function renderLogPage(container, ctx) {
       h("div", { class: "card__body stack" }, [columnsDetails, tableHost, pagerHost]),
     ]));
 
-    queryBtn.addEventListener("click", () => load());
+    queryBtn.addEventListener("click", () => {
+      resetPage();
+      load();
+    });
     addFilterBtn.addEventListener("click", () => {
       const state = perType.get(active);
       state.filters.push({ field: "", operator: "eq", value: "" });
+      resetPage();
       renderFilters();
     });
     clearFilterBtn.addEventListener("click", () => {
       perType.get(active).filters = [];
+      resetPage();
       renderFilters();
     });
+    fromInput.addEventListener("change", () => resetPage());
+    toInput.addEventListener("change", () => resetPage());
 
     function activeMeta() { return types.find((item) => item.type === active) || types[0]; }
     function activeState() { return perType.get(active); }
+    // Any change to the query conditions invalidates the current offset: the
+    // next load must start from the first page or a narrower result set
+    // silently lands on an empty page.
+    function resetPage() { activeState().page = 1; }
 
     function renderTabs() {
       mount(tabsHost, ...types.map((item) => h("button", {
@@ -192,7 +203,7 @@ export default async function renderLogPage(container, ctx) {
         const valueInput = h("input", { class: "input", value: filter.value || "", placeholder: t("log.value.ph") });
         const remove = h("button", {
           class: "btn btn--ghost btn--sm", type: "button", "aria-label": t("log.value.aria"),
-          onclick: () => { state.filters.splice(index, 1); renderFilters(); },
+          onclick: () => { state.filters.splice(index, 1); resetPage(); renderFilters(); },
         }, "×");
 
         mount(fieldSelect, [
@@ -216,10 +227,11 @@ export default async function renderLogPage(container, ctx) {
         fieldSelect.addEventListener("change", () => {
           filter.field = fieldSelect.value;
           filter.operator = "eq";
+          resetPage();
           refreshOperators();
         });
-        operatorSelect.addEventListener("change", () => { filter.operator = operatorSelect.value; });
-        valueInput.addEventListener("input", () => { filter.value = valueInput.value; });
+        operatorSelect.addEventListener("change", () => { filter.operator = operatorSelect.value; resetPage(); });
+        valueInput.addEventListener("input", () => { filter.value = valueInput.value; resetPage(); });
         refreshOperators();
         return h("div", { class: "toolbar" }, [
           h("span", { class: "field__label" }, t("log.cond", { n: index + 1 })),
@@ -317,25 +329,70 @@ export default async function renderLogPage(container, ctx) {
       const state = activeState();
       const totalKnown = result.totalKnown === true;
       const totalPages = totalKnown ? (result.totalPages || 0) : 0;
-      const pageLabel = totalKnown && totalPages
-        ? `${result.page} / ${totalPages}`
-        : t("log.ck.page", { n: result.page || state.page });
+      const current = result.page || state.page;
+      const hasMore = totalKnown ? current < totalPages : result.hasMore === true;
+      // The server rejects offsets beyond 100000 rows, so the last reachable
+      // page depends on the page size rather than on the total count alone.
+      const maxReachablePage = Math.floor(100000 / state.pageSize) + 1;
+      const lastPage = totalKnown ? Math.min(totalPages, maxReachablePage) : 0;
+
+      function goTo(page) {
+        if (!Number.isInteger(page) || page < 1 || (totalKnown && page > totalPages)) {
+          toast.error(t("log.ck.pageInvalid", { total: totalPages }));
+          return;
+        }
+        if (page > maxReachablePage) {
+          toast.error(t("log.ck.pageTooFar", { n: maxReachablePage }));
+          return;
+        }
+        state.page = page;
+        load();
+      }
+
       const pageSize = h("select", { class: "select", style: { width: "auto" } }, [10, 20, 50, 100, 200].map((n) =>
         h("option", { value: String(n), selected: n === state.pageSize }, String(n))));
       pageSize.value = String(state.pageSize);
       pageSize.addEventListener("change", () => { state.pageSize = Number(pageSize.value) || 50; state.page = 1; load(); });
-      const prev = h("button", { class: "btn", type: "button", disabled: state.page <= 1, onclick: () => { state.page -= 1; load(); } }, t("log.ck.prev"));
-      const hasMore = totalKnown ? (totalPages > 0 && state.page < totalPages) : result.hasMore === true;
-      const next = h("button", { class: "btn", type: "button", disabled: !hasMore, onclick: () => { state.page += 1; load(); } }, t("log.ck.next"));
+
+      const first = h("button", { class: "btn", type: "button", disabled: current <= 1, onclick: () => goTo(1) }, t("log.ck.first"));
+      const prev = h("button", { class: "btn", type: "button", disabled: current <= 1, onclick: () => goTo(current - 1) }, t("log.ck.prev"));
+      const next = h("button", { class: "btn", type: "button", disabled: !hasMore, onclick: () => goTo(current + 1) }, t("log.ck.next"));
+      const last = h("button", {
+        class: "btn", type: "button", disabled: lastPage === 0 || current >= lastPage, onclick: () => goTo(lastPage),
+      }, t("log.ck.last"));
+
+      const pageLabel = totalKnown
+        ? (totalPages === 0 ? t("log.ck.noPages") : t("log.ck.pageOf", { n: current, total: totalPages }))
+        : t("log.ck.page", { n: current });
       const totalLabel = totalKnown ? h("span", { class: "page__subtitle" }, t("log.ck.total", { n: result.total || 0 })) : null;
+
+      const jumpInput = h("input", {
+        class: "input", type: "number", min: "1", step: "1", value: String(current),
+        style: { width: "80px" }, "aria-label": t("log.ck.jumpTo"),
+      });
+      if (totalKnown && totalPages > 0) jumpInput.max = String(totalPages);
+      const jump = () => goTo(Number(jumpInput.value));
+      jumpInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          jump();
+        }
+      });
+      const jumpBtn = h("button", { class: "btn", type: "button", disabled: totalKnown && totalPages === 0, onclick: jump }, t("log.ck.jump"));
+
       mount(pagerHost, [
         totalLabel,
         h("label", { style: { display: "inline-flex", alignItems: "center", gap: "var(--space-2)", whiteSpace: "nowrap" } }, [
           h("span", { class: "field__label" }, t("log.ck.pageSize")), pageSize,
         ]),
+        first,
         prev,
         h("span", { class: "page__subtitle", style: { whiteSpace: "nowrap" } }, pageLabel),
         next,
+        last,
+        h("label", { style: { display: "inline-flex", alignItems: "center", gap: "var(--space-2)", whiteSpace: "nowrap" } }, [
+          h("span", { class: "field__label" }, t("log.ck.jumpTo")), jumpInput, jumpBtn,
+        ]),
       ]);
     }
 
@@ -367,7 +424,7 @@ export default async function renderLogPage(container, ctx) {
           columns: selectedColumns,
           page: state.page,
           pageSize: state.pageSize,
-          includeTotal: false,
+          includeTotal: true,
         });
         const result = (res && res.data) || {};
         if (requestID !== requestSerial || requestType !== active) return;

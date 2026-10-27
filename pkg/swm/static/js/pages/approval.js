@@ -6,6 +6,7 @@
 import { api } from "../core/api.js";
 import { h, mount, qs, qsa } from "../core/dom.js";
 import { renderTable } from "../core/components/table.js";
+import { renderPager, clampPage, sliceRows } from "../core/components/pager.js";
 import { openModal } from "../core/components/modal.js";
 import { confirm } from "../core/components/confirm.js";
 import { toast } from "../core/components/toast.js";
@@ -20,9 +21,18 @@ export default async function renderPermissionPage(container, ctx) {
   let manageView = isAdmin ? "all" : "mine";
   let viewVariant = "card"; // card | calendar
 
+  // 工单列表的筛选 + 分页都在前端做：/tacacs/approval/get 一次返回当前身份
+  // 可见的全部工单（非管理员由 server 限定为本人），权限展示区和申请上限
+  // 预检也依赖这份全量数据，所以不单独走分页接口。
+  const manageFilter = { keyword: "", status: "", role: "" };
+  let managePage = 1;
+  let managePageSize = 20;
+
   const viewHost = h("div");
   const manageActionsHost = h("div");
+  const manageFilterHost = h("div");
   const manageHost = h("div");
+  const managePagerHost = h("div", { class: "row row--end row--wrap", style: { gap: "var(--space-3)" } });
 
   const viewTabs = h("div", { class: "tabs", role: "tablist", "aria-label": t("approval.viewTabs.aria") }, [
     viewTabBtn("card", t("approval.tab.card")),
@@ -75,7 +85,9 @@ export default async function renderPermissionPage(container, ctx) {
         h("h2", { id: "sec-manage", class: "section-title" }, t("approval.section.manage")),
         manageActionsHost,
       ]),
+      manageFilterHost,
       manageHost,
+      managePagerHost,
     ]),
   ]));
 
@@ -420,27 +432,158 @@ export default async function renderPermissionPage(container, ctx) {
       }, t("approval.btn.create")),
     ]));
 
+    syncFilterOptions();
     renderManageTable();
   }
 
   function setManageView(v) {
     manageView = v;
+    managePage = 1;
     renderManageSection();
   }
 
-  function visibleManageRows() {
+  // ----- 筛选 -----
+
+  // 状态下拉的候选项固定；"生效中 / 待生效" 与状态徽标的拆分口径一致——两者
+  // 在库里都是 4，仅按 StartTime 是否已到区分。
+  const STATUS_FILTER_OPTIONS = [
+    { value: "3",  key: "status.approval.3" },
+    { value: "4",  key: "status.approval.4" },
+    { value: "4n", key: "status.approval.4.notStarted" },
+    { value: "2",  key: "status.approval.2" },
+    { value: "0",  key: "status.approval.0" },
+    { value: "1",  key: "status.approval.1" },
+    { value: "6",  key: "status.approval.6" },
+  ];
+
+  // 筛选控件只构建一次：每次按键都重建 input 会丢焦点。选项内容随数据变化
+  // 在 syncFilterOptions() 里刷新。
+  const keywordInput = h("input", {
+    type: "search", class: "input", autocomplete: "off",
+    placeholder: t(isAdmin ? "approval.filter.keyword.admin" : "approval.filter.keyword.user"),
+    "aria-label": t("approval.filter.keyword"),
+    style: { minWidth: "240px", flex: "1" },
+    oninput: () => applyFilter({ keyword: keywordInput.value }),
+  });
+  const statusSelect = h("select", {
+    class: "select", "aria-label": t("approval.filter.status"),
+    onchange: () => applyFilter({ status: statusSelect.value }),
+  });
+  const roleSelect = h("select", {
+    class: "select", "aria-label": t("approval.filter.role"),
+    onchange: () => applyFilter({ role: roleSelect.value }),
+  });
+  const clearFilterBtn = h("button", {
+    class: "btn btn--ghost", type: "button",
+    onclick: () => {
+      keywordInput.value = "";
+      statusSelect.value = "";
+      roleSelect.value = "";
+      applyFilter({ keyword: "", status: "", role: "" });
+    },
+  }, t("approval.filter.clear"));
+
+  mount(manageFilterHost, h("div", { class: "toolbar" }, [
+    keywordInput,
+    statusSelect,
+    roleSelect,
+    clearFilterBtn,
+    // 非管理员的数据已由 server 限定为本人，这里明示一下，避免误以为筛选
+    // 条件没生效。
+    !isAdmin ? h("span", { class: "text-subtle", style: { fontSize: "var(--font-size-sm)", flexBasis: "100%" } },
+      t("approval.filter.nonAdminHint")) : null,
+  ]));
+
+  function applyFilter(patch) {
+    Object.assign(manageFilter, patch);
+    managePage = 1;
+    renderManageTable();
+  }
+
+  function hasActiveFilter() {
+    return !!(manageFilter.keyword.trim() || manageFilter.role
+      || (manageView !== "pending" && manageFilter.status));
+  }
+
+  function syncFilterOptions() {
+    // "待审批" 页签本身就是状态条件，状态下拉在该页签下隐藏且不参与过滤。
+    statusSelect.style.display = manageView === "pending" ? "none" : "";
+    mount(statusSelect, [
+      h("option", { value: "" }, t("approval.filter.status.all")),
+      ...STATUS_FILTER_OPTIONS.map((opt) => h("option", { value: opt.value }, t(opt.key))),
+    ]);
+    statusSelect.value = manageFilter.status;
+
+    // 角色候选取自当前页签范围内实际出现过的角色，筛掉数据里已不存在的选项。
+    const roles = Array.from(new Set(tabRows().map((r) => r.ApprovalPermissions).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b));
+    if (manageFilter.role && !roles.includes(manageFilter.role)) manageFilter.role = "";
+    mount(roleSelect, [
+      h("option", { value: "" }, t("approval.filter.role.all")),
+      ...roles.map((role) => h("option", { value: role }, role)),
+    ]);
+    roleSelect.value = manageFilter.role;
+  }
+
+  function tabRows() {
     if (manageView === "mine")    return allRows.filter((r) => r.User === username);
     if (manageView === "pending") return allRows.filter((r) => r.Status === 3);
     return allRows;
   }
 
+  function isNotStarted(row) {
+    if (row.Status !== 4 || !row.StartTime) return false;
+    const start = parseTimeString(row.StartTime);
+    return !!start && start.getTime() > Date.now();
+  }
+
+  function matchesStatus(row) {
+    const want = manageView === "pending" ? "" : manageFilter.status;
+    if (!want) return true;
+    if (want === "4n") return isNotStarted(row);
+    if (want === "4")  return row.Status === 4 && !isNotStarted(row);
+    return String(row.Status) === want;
+  }
+
+  // 关键字：工单号精确匹配（可带 # 前缀），其余字段子串匹配。普通用户只会看到
+  // 自己的工单，申请人 / 审批人字段对他没有筛选意义，仅管理员参与匹配。
+  function matchesKeyword(row) {
+    const needle = manageFilter.keyword.trim().toLowerCase();
+    if (!needle) return true;
+    const idNeedle = needle.startsWith("#") ? needle.slice(1) : needle;
+    if (idNeedle && String(row.ID) === idNeedle) return true;
+    const fields = [row.ApprovalPermissions];
+    if (isAdmin) fields.push(row.User, row.Approver);
+    return fields.some((f) => f && String(f).toLowerCase().includes(needle));
+  }
+
+  function visibleManageRows() {
+    return tabRows().filter((r) =>
+      matchesStatus(r)
+      && (!manageFilter.role || r.ApprovalPermissions === manageFilter.role)
+      && matchesKeyword(r));
+  }
+
   function renderManageTable() {
     const rows = visibleManageRows();
+    // 刷新 / 审批操作后数据量可能变化，把页码夹回有效范围而不是跳回首页。
+    managePage = clampPage(managePage, managePageSize, rows.length);
     renderTable(manageHost, {
-      columns: inferColumns(rows),
-      rows,
-      emptyText: t("approval.empty.records"),
+      // 列结构按全量数据推断，避免筛选结果为空时表头在默认列和实际列之间跳动。
+      columns: inferColumns(allRows),
+      rows: sliceRows(rows, managePage, managePageSize),
+      emptyText: hasActiveFilter() ? t("approval.empty.filtered") : t("approval.empty.records"),
       rowActions: (row) => actionsFor(row),
+    });
+    renderPager(managePagerHost, {
+      page: managePage,
+      pageSize: managePageSize,
+      total: rows.length,
+      onChange: ({ page, pageSize }) => {
+        managePage = page;
+        managePageSize = pageSize;
+        renderManageTable();
+      },
     });
   }
 
@@ -758,6 +901,7 @@ export default async function renderPermissionPage(container, ctx) {
       h("div", { class: "card__body text-muted", style: { textAlign: "center", padding: "var(--space-6)" } }, t("common.loading")),
     ]));
     renderTable(manageHost, { columns: [], rows: [], loading: true });
+    mount(managePagerHost);
     try {
       const res = await api.get("/tacacs/approval/get");
       allRows = ((res && res.data) || []).map((r) => {
@@ -776,6 +920,7 @@ export default async function renderPermissionPage(container, ctx) {
         h("div", { class: "card__body text-danger" }, t("common.loadFailed") + (err.message || err)),
       ]));
       mount(manageHost);
+      mount(managePagerHost);
     }
   }
 

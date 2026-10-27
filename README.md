@@ -1257,7 +1257,7 @@ SwM 下「操作日志」入口(`static/js/pages/log.js`)支持两种展示方�
 - `POST /tacacs/system/clickhouse/test` → 管理员测试 ClickHouse 连接。
 - `POST /tacacs/system/clickhouse/schema` → 管理员读取库中的表/列结构。
 - `POST /tacacs/system/log-config` → 管理员保存模式、外部跳转配置和 ClickHouse 映射；ClickHouse 模式保存前必须通过连通性和映射校验。
-- `POST /tacacs/log/query` → 按日志类型、固定事件范围、筛选条件、展示列、页码和每页数量查询；必须携带经过 Server 验证的 SwM 身份。管理员可查询全部用户,普通用户的请求即使不带筛选也会由 Server 追加 `user = 当前登录用户`,显式提交用户名筛选会被拒绝。默认只取当前页并多取一行判断 `hasMore`，避免为每次翻页执行昂贵的全范围 `count()`。响应返回列定义、行、`hasMore` 和 `totalKnown=false`。需要精确总数时显式传 `includeTotal=true`，Server 会并发执行总数统计与当前页查询并返回 `total` / `totalPages`。映射中配置的字段名称会作为结果表头，名称为空时使用不带结构体前缀的字段名。
+- `POST /tacacs/log/query` → 按日志类型、固定事件范围、筛选条件、展示列、页码和每页数量查询；必须携带经过 Server 验证的 SwM 身份。管理员可查询全部用户,普通用户的请求即使不带筛选也会由 Server 追加 `user = 当前登录用户`,显式提交用户名筛选会被拒绝。默认只取当前页并多取一行判断 `hasMore`，避免为每次翻页执行昂贵的全范围 `count()`。响应返回列定义、行、`hasMore` 和 `totalKnown=false`。需要精确总数时显式传 `includeTotal=true`，Server 会并发执行总数统计与当前页查询并返回 `total` / `totalPages`。SwM 日志页默认传 `includeTotal=true`，用返回的 `total` / `totalPages` 展示总条数、当前页/总页数，并提供首页、末页和输入页码跳转。映射中配置的字段名称会作为结果表头，名称为空时使用不带结构体前缀的字段名。
 
 这样做保留了外部日志栈的检索能力，也为已由 loghub 汇聚到 ClickHouse 的场景提供了受控直查入口；Client 端如何把日志推到 loghub 或其他日志系统，见下一节。
 
